@@ -1,0 +1,22 @@
+{
+  "name": "gold-forecast-agent",
+  "version": "1.0.0",
+  "description": "A daily AI agent that forecasts gold price movement by analyzing news sentiment, mining stock performance, forex rates, and silver prices.",
+  "main": "gold_forecast_agent.ts",
+  "scripts": {
+    "start": "npx tsx gold_forecast_agent.ts",
+    "test": "npx tsx --test test_gold_forecast.ts",
+    "test:long": "RUN_LONG_TESTS=1 npx tsx --test test_gold_forecast.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@vercel/node": "^5.0.0"
+  },
+  "dependencies": {
+    "@vercel/blob": "^0.27.0"
+  }
+}

@@ -1,0 +1,20 @@
+# Environment
+.env
+.env.local
+.env*.local
+
+# Data (persistence files, not committed)
+data/
+
+# Node
+node_modules/
+
+# Vercel
+.vercel/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

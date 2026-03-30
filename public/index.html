@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gold Forecast Daily AI Agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    .container { max-width: 960px; margin: 0 auto; }
+
+    /* Header */
+    h1 { font-size: 1.8rem; margin-bottom: 0.3rem; color: #f0b429; }
+    .subtitle { color: #8b949e; font-size: 0.95rem; margin-bottom: 0.5rem; }
+    .last-run { color: #484f58; font-size: 0.8rem; margin-bottom: 2rem; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-live { background: #1a3a2a; color: #3fb950; }
+    .badge-ai { background: #2a1f0d; color: #f0b429; }
+
+    /* Cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1.2rem;
+    }
+    .card-label {
+      font-size: 0.8rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .card-value { font-size: 1.6rem; font-weight: 700; margin-top: 0.3rem; }
+    .card-hint {
+      font-size: 0.75rem;
+      color: #6e7681;
+      margin-top: 0.4rem;
+      line-height: 1.3;
+    }
+    .gold { color: #f0b429; }
+    .green { color: #3fb950; }
+    .red { color: #f85149; }
+    .neutral { color: #8b949e; }
+
+    /* Analysis section */
+    .section-title {
+      font-size: 1.1rem;
+      margin-bottom: 0.5rem;
+      color: #c9d1d9;
+    }
+    .section-desc {
+      font-size: 0.8rem;
+      color: #6e7681;
+      margin-bottom: 0.8rem;
+    }
+    .analysis-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin-bottom: 2rem;
+    }
+    .analysis-box .article-text {
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #e1e4e8;
+      margin: 0.5rem 0;
+    }
+    .analysis-box .forecast-line {
+      color: #f0b429;
+      font-weight: 600;
+      margin-top: 0.8rem;
+      font-size: 0.95rem;
+    }
+    .forecast-explain {
+      color: #6e7681;
+      font-size: 0.8rem;
+      margin-top: 0.3rem;
+    }
+    .coefficients {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.8rem;
+      margin-top: 1rem;
+    }
+    .coeff {
+      background: #1c2129;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.7rem 0.8rem;
+      text-align: center;
+    }
+    .coeff-label { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; }
+    .coeff-value { font-size: 1.1rem; font-weight: 600; margin-top: 0.2rem; }
+    .coeff-hint { font-size: 0.65rem; color: #6e7681; margin-top: 0.3rem; }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #161b22;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #30363d;
+    }
+    th {
+      background: #1c2129;
+      text-align: left;
+      padding: 0.8rem 1rem;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+      border-bottom: 1px solid #30363d;
+    }
+    td {
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #21262d;
+      font-variant-numeric: tabular-nums;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover { background: #1c2129; }
+    tr.today-row { background: #1a1f2b; border-left: 3px solid #f0b429; }
+    .empty { color: #484f58; font-style: italic; }
+    .loading { text-align: center; padding: 3rem; color: #8b949e; }
+
+    /* Accuracy summary */
+    .accuracy-bar {
+      margin-top: 1rem;
+      margin-bottom: 2rem;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1rem 1.2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .accuracy-label { font-size: 0.8rem; color: #8b949e; }
+    .accuracy-value { font-size: 1rem; font-weight: 600; }
+
+    .footer {
+      margin-top: 2rem;
+      text-align: center;
+      color: #484f58;
+      font-size: 0.8rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span></h1>
+    <p class="subtitle">
+      <span class="badge badge-ai">Llama 3.3 70B</span>
+      AI-powered gold price prediction &mdash; runs every day at 10:00 AM (Toronto)
+    </p>
+
+    <p class="last-run" id="last-run"></p>
+
+    <!-- Summary Cards -->
+    <div class="cards" id="cards">
+      <div class="card">
+        <div class="card-label">Today's Gold Price</div>
+        <div class="card-value gold" id="gold-price">--</div>
+        <div class="card-hint" id="gold-hint">Spot price in USD per troy ounce, sourced from kitco.com at 10 AM</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Our Prediction for Tomorrow</div>
+        <div class="card-value" id="forecast">--</div>
+        <div class="card-hint" id="forecast-hint">Where we think gold will be tomorrow, based on today's 3 market signals</div>
+      </div>
+      <div class="card">
+        <div class="card-label">How Close Were We?</div>
+        <div class="card-value" id="deviation">--</div>
+        <div class="card-hint" id="deviation-hint">Difference between what we predicted yesterday and today's actual price</div>
+      </div>
+    </div>
+
+    <!-- AI Analysis -->
+    <h2 class="section-title">News Analysis &amp; Forecast</h2>
+    <p class="section-desc">Every morning, the agent scrapes up to 20 sources — Kitco, Reuters, Yahoo Finance, MarketWatch, CNBC, FXStreet, BullionVault, and more — then Llama 3.3 70B reads all of them and writes a one-sentence outlook.</p>
+    <div class="analysis-box" id="analysis-box">
+      <div class="empty">Waiting for first pipeline run...</div>
+    </div>
+
+    <!-- Chart -->
+    <h2 class="section-title">Actual vs Predicted</h2>
+    <p class="section-desc">Gold line = real price. Blue dashed = what we predicted. The closer the lines, the better the model.</p>
+    <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1rem;margin-bottom:2rem;">
+      <canvas id="price-chart" height="260"></canvas>
+    </div>
+
+    <!-- History Table -->
+    <h2 class="section-title">Prediction History</h2>
+    <p class="section-desc">Each row = one day. We record the real price, what we predicted, and how far off we were. Click a row to see the AI analysis.</p>
+    <div id="accuracy-summary"></div>
+    <div id="table-container">
+      <div class="loading">Loading forecast data...</div>
+    </div>
+
+    <div class="footer">
+      Gold Forecast Daily AI Agent V1<br>
+      kitco.com + Yahoo Finance &bull; Groq Llama 3.3 70B &bull; Daily 10 AM Toronto
+    </div>
+  </div>
+
+  <script>
+    function esc(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    function fmt(val) {
+      const n = parseFloat(val);
+      return isNaN(n) ? null : n;
+    }
+
+    function dollar(n) {
+      return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    async function loadData() {
+      try {
+        const resp = await fetch('/api/history');
+        if (!resp.ok) {
+          document.getElementById('table-container').innerHTML =
+            '<div class="loading">Could not reach the API. The agent may not have run yet.</div>';
+          return;
+        }
+
+        const data = await resp.json();
+        if (data.error || !data.rows) {
+          document.getElementById('table-container').innerHTML =
+            '<div class="loading">No data yet. The first forecast will appear after 10 AM Toronto time.</div>';
+          return;
+        }
+
+        // --- Cards ---
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+
+        if (data.rows.length > 0) {
+          const latest = data.rows[0];
+          const price = fmt(latest.actual_gold_price);
+          if (price !== null) {
+            document.getElementById('gold-price').textContent = dollar(price);
+          }
+
+          const dev = fmt(latest.deviation);
+          if (dev !== null) {
+            const devEl = document.getElementById('deviation');
+            devEl.textContent = (dev >= 0 ? '+' : '') + dollar(Math.abs(dev));
+            if (dev < 0) devEl.textContent = '-' + dollar(Math.abs(dev));
+            devEl.className = 'card-value ' + (Math.abs(dev) < 50 ? 'green' : dev >= 0 ? 'green' : 'red');
+            const pctOff = price ? ((Math.abs(dev) / price) * 100).toFixed(2) : null;
+            document.getElementById('deviation-hint').textContent =
+              'Yesterday we predicted ' + dollar(fmt(latest.forecast)) + '. Actual was ' + dollar(price) +
+              (pctOff ? ' (' + pctOff + '% off)' : '');
+          } else if (latest.forecast === '' || latest.forecast == null) {
+            document.getElementById('deviation').textContent = 'N/A';
+            document.getElementById('deviation').className = 'card-value neutral';
+            document.getElementById('deviation-hint').textContent = 'First day — no prior prediction to compare against';
+          }
+        }
+
+        if (data.lastForecast) {
+          const fcVal = fmt(data.lastForecast.forecast);
+          if (fcVal !== null) {
+            const fc = document.getElementById('forecast');
+            fc.textContent = dollar(fcVal);
+            fc.className = 'card-value gold';
+            // Show predicted direction
+            if (data.rows.length > 0) {
+              const currentPrice = fmt(data.rows[0].actual_gold_price);
+              if (currentPrice) {
+                const diff = fcVal - currentPrice;
+                const pct = ((diff / currentPrice) * 100).toFixed(2);
+                const arrow = diff >= 0 ? '\u2191' : '\u2193';
+                document.getElementById('forecast-hint').textContent =
+                  'Predicting gold will ' + (diff >= 0 ? 'rise' : 'fall') + ' by ' + dollar(Math.abs(diff)) +
+                  ' (' + (diff >= 0 ? '+' : '') + pct + '%) ' + arrow;
+              }
+            }
+          }
+        }
+
+        // Last run timestamp
+        if (data.rows.length > 0) {
+          document.getElementById('last-run').textContent =
+            'Last updated: ' + data.rows[0].date + ' at 10:00 AM Toronto';
+        }
+
+        // --- Analysis Box ---
+        if (data.lastForecast) {
+          const lf = data.lastForecast;
+          let html = '';
+          if (lf.article) {
+            html += '<div style="font-size:0.75rem;color:#8b949e;margin-bottom:0.3rem;">AI Summary (Llama 3.3 70B) &mdash; based on up to 20 scraped news sources</div>';
+            html += '<div class="article-text">"' + esc(lf.article) + '"</div>';
+          }
+          const avgCoeff = (lf.c1 != null && lf.c2 != null && lf.c3 != null)
+            ? ((lf.c1 + lf.c2 + lf.c3) / 3).toFixed(2)
+            : null;
+          if (avgCoeff !== null) {
+            const dir = parseFloat(avgCoeff) >= 0 ? 'upward' : 'downward';
+            html += '<div class="forecast-line">Overall signal: ' + (parseFloat(avgCoeff) >= 0 ? '+' : '') + avgCoeff + '% ' + dir + ' pressure</div>';
+            html += '<div class="forecast-explain">This is the average of 3 market signals below. Positive = markets suggest gold goes up. Negative = down.</div>';
+          }
+          if (lf.c1 != null || lf.c2 != null || lf.c3 != null) {
+            html += '<div class="coefficients">';
+            html += '<div class="coeff"><div class="coeff-label">Mining Stocks</div><div class="coeff-value ' + (lf.c1 >= 0 ? 'green' : 'red') + '">' + (lf.c1 >= 0 ? '+' : '') + (lf.c1 != null ? lf.c1.toFixed(2) : '--') + '%</div><div class="coeff-hint">Newmont (NEM) &amp; Barrick (GOLD) avg 24h change</div></div>';
+            html += '<div class="coeff"><div class="coeff-label">Forex Signal</div><div class="coeff-value ' + (lf.c2 >= 0 ? 'green' : 'red') + '">' + (lf.c2 >= 0 ? '+' : '') + (lf.c2 != null ? lf.c2.toFixed(2) : '--') + '%</div><div class="coeff-hint">Australian Dollar vs US Dollar 24h change</div></div>';
+            html += '<div class="coeff"><div class="coeff-label">Silver Price</div><div class="coeff-value ' + (lf.c3 >= 0 ? 'green' : 'red') + '">' + (lf.c3 >= 0 ? '+' : '') + (lf.c3 != null ? lf.c3.toFixed(2) : '--') + '%</div><div class="coeff-hint">iShares Silver Trust (SLV) 24h change</div></div>';
+            html += '</div>';
+          }
+          if (html) {
+            document.getElementById('analysis-box').innerHTML = html;
+          }
+        }
+
+        // --- Accuracy Summary ---
+        if (data.rows.length > 1) {
+          const deviations = data.rows
+            .map(r => fmt(r.deviation))
+            .filter(d => d !== null);
+          if (deviations.length > 0) {
+            const avgAbsDev = deviations.reduce((s, d) => s + Math.abs(d), 0) / deviations.length;
+            const avgPrice = data.rows.reduce((s, r) => s + (fmt(r.actual_gold_price) || 0), 0) / data.rows.length;
+            const pctAccuracy = avgPrice > 0 ? (100 - (avgAbsDev / avgPrice) * 100).toFixed(1) : null;
+            let html = '<div class="accuracy-bar">';
+            html += '<div><div class="accuracy-label">Average prediction error</div><div class="accuracy-value">' + dollar(avgAbsDev) + ' per day</div></div>';
+            if (pctAccuracy) {
+              html += '<div><div class="accuracy-label">Prediction accuracy</div><div class="accuracy-value green">' + pctAccuracy + '%</div></div>';
+            }
+            html += '<div><div class="accuracy-label">Days with predictions</div><div class="accuracy-value neutral">' + deviations.length + '</div></div>';
+            html += '</div>';
+            document.getElementById('accuracy-summary').innerHTML = html;
+          }
+        }
+
+        // --- Table ---
+        if (data.rows.length === 0) {
+          document.getElementById('table-container').innerHTML =
+            '<div class="loading">No data yet. The first forecast will appear after 10 AM Toronto time.</div>';
+          return;
+        }
+
+        let thead = '<table><thead><tr><th>Date</th><th>Actual Price</th><th>We Predicted</th><th>Off By</th><th>Signal</th></tr></thead><tbody>';
+        let rows = '';
+        for (const row of data.rows) {
+          const price = fmt(row.actual_gold_price);
+          const forecast = fmt(row.forecast);
+          const devVal = fmt(row.deviation);
+          const isToday = row.date === today;
+          const devClass = devVal !== null ? (Math.abs(devVal) < 50 ? 'green' : 'red') : 'empty';
+
+          // Signal column: overall % from coefficients
+          let signalHtml = '<span class="empty">--</span>';
+          if (row.c1 != null && row.c2 != null && row.c3 != null) {
+            const avg = ((row.c1 + row.c2 + row.c3) / 3);
+            const cls = avg >= 0 ? 'green' : 'red';
+            signalHtml = '<span class="' + cls + '">' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%</span>';
+          }
+
+          rows += '<tr' + (isToday ? ' class="today-row"' : '') + ' style="cursor:pointer" onclick="toggleAnalysis(this)">';
+          rows += '<td>' + esc(row.date || '') + (isToday ? ' <span style="color:#f0b429;font-size:0.7rem">TODAY</span>' : '') + '</td>';
+          rows += '<td>' + (price !== null ? dollar(price) : '<span class="empty">--</span>') + '</td>';
+          rows += '<td>' + (forecast !== null ? dollar(forecast) : '<span class="empty">first day</span>') + '</td>';
+          if (devVal !== null) {
+            const pctOff = price ? ((Math.abs(devVal) / price) * 100).toFixed(2) + '%' : '';
+            rows += '<td class="' + devClass + '">' + (devVal >= 0 ? '+' : '-') + dollar(Math.abs(devVal)) + ' <span style="font-size:0.75rem;color:#6e7681">(' + pctOff + ')</span></td>';
+          } else {
+            rows += '<td><span class="empty">' + (forecast === null || forecast === '' ? 'first day' : '--') + '</span></td>';
+          }
+          rows += '<td>' + signalHtml + '</td>';
+          rows += '</tr>';
+
+          // Expandable analysis sub-row (hidden by default)
+          if (row.article) {
+            rows += '<tr class="analysis-row" style="display:none">';
+            rows += '<td colspan="5" style="padding:0.8rem 1rem;background:#1c2129;border-bottom:1px solid #30363d">';
+            rows += '<div style="font-size:0.75rem;color:#8b949e;margin-bottom:0.3rem">AI Analysis for ' + esc(row.date) + '</div>';
+            rows += '<div style="font-size:0.9rem;color:#e1e4e8;line-height:1.4">"' + esc(row.article) + '"</div>';
+            if (row.c1 != null) {
+              rows += '<div style="margin-top:0.5rem;display:flex;gap:1rem;font-size:0.75rem;color:#8b949e">';
+              rows += '<span>Mining: <span class="' + (row.c1 >= 0 ? 'green' : 'red') + '">' + (row.c1 >= 0 ? '+' : '') + row.c1.toFixed(2) + '%</span></span>';
+              rows += '<span>Forex: <span class="' + (row.c2 >= 0 ? 'green' : 'red') + '">' + (row.c2 >= 0 ? '+' : '') + row.c2.toFixed(2) + '%</span></span>';
+              rows += '<span>Silver: <span class="' + (row.c3 >= 0 ? 'green' : 'red') + '">' + (row.c3 >= 0 ? '+' : '') + row.c3.toFixed(2) + '%</span></span>';
+              rows += '</div>';
+            }
+            rows += '</td></tr>';
+          }
+        }
+        document.getElementById('table-container').innerHTML = thead + rows + '</tbody></table>';
+
+        // Render chart
+        if (data.rows.length > 0) {
+          renderChart(data.rows);
+        }
+
+      } catch (e) {
+        document.getElementById('table-container').innerHTML =
+          '<div class="loading">Failed to load data. Try refreshing the page.</div>';
+      }
+    }
+
+    let chartInstance = null;
+
+    function renderChart(rows) {
+      // rows are newest-first from API, reverse for chronological order
+      const chronological = [...rows].reverse();
+      const labels = chronological.map(r => r.date);
+      const actuals = chronological.map(r => { const v = parseFloat(r.actual_gold_price); return isNaN(v) ? null : v; });
+      const predictions = chronological.map(r => { const v = parseFloat(r.forecast); return isNaN(v) ? null : v; });
+
+      const ctx = document.getElementById('price-chart').getContext('2d');
+      if (chartInstance) chartInstance.destroy();
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Actual Price',
+              data: actuals,
+              borderColor: '#f0b429',
+              backgroundColor: 'rgba(240, 180, 41, 0.1)',
+              borderWidth: 2.5,
+              pointRadius: 4,
+              pointBackgroundColor: '#f0b429',
+              tension: 0.3,
+              fill: true,
+            },
+            {
+              label: 'Our Prediction',
+              data: predictions,
+              borderColor: '#58a6ff',
+              borderWidth: 2,
+              borderDash: [6, 3],
+              pointRadius: 4,
+              pointBackgroundColor: '#58a6ff',
+              pointStyle: 'triangle',
+              tension: 0.3,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: { color: '#8b949e', font: { size: 12 } },
+            },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  return ctx.dataset.label + ': $' + (ctx.parsed.y ? ctx.parsed.y.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '--');
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#6e7681', font: { size: 11 } },
+              grid: { color: '#21262d' },
+            },
+            y: {
+              ticks: {
+                color: '#6e7681',
+                font: { size: 11 },
+                callback: function(v) { return '$' + v.toLocaleString(); }
+              },
+              grid: { color: '#21262d' },
+            },
+          },
+        },
+      });
+    }
+
+    function toggleAnalysis(tr) {
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains('analysis-row')) {
+        next.style.display = next.style.display === 'none' ? 'table-row' : 'none';
+      }
+    }
+
+    loadData();
+    // Auto-refresh every 60 seconds
+    setInterval(loadData, 60000);
+  </script>
+</body>
+</html>
