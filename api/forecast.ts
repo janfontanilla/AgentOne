@@ -6,7 +6,7 @@
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { put, list, getDownloadUrl } from "@vercel/blob";
+import { put, list } from "@vercel/blob";
 import {
   log,
   logs,
@@ -26,8 +26,8 @@ async function readBlob(filename: string): Promise<string | null> {
   try {
     const { blobs } = await list({ prefix: filename });
     if (blobs.length === 0) return null;
-    const downloadUrl = await getDownloadUrl(blobs[0].url);
-    const resp = await fetch(downloadUrl);
+    // Fetch directly from blob URL without getDownloadUrl to save 1 operation
+    const resp = await fetch(blobs[0].url);
     if (!resp.ok) return null;
     return await resp.text();
   } catch (e: any) {
@@ -102,37 +102,8 @@ async function saveTodayForecast(
   );
 }
 
-async function saveAnalysisEntry(
-  date: string,
-  article: string,
-  c1: number,
-  c2: number,
-  c3: number
-): Promise<void> {
-  try {
-    const raw = await readBlob("analysis_history.json");
-    const history: Array<{ date: string; article: string; c1: number; c2: number; c3: number }> =
-      raw ? JSON.parse(raw) : [];
-    // Replace if same date already exists, otherwise append
-    const idx = history.findIndex((e) => e.date === date);
-    const entry = {
-      date,
-      article,
-      c1: parseFloat(c1.toFixed(2)),
-      c2: parseFloat(c2.toFixed(2)),
-      c3: parseFloat(c3.toFixed(2)),
-    };
-    if (idx >= 0) {
-      history[idx] = entry;
-    } else {
-      history.push(entry);
-    }
-    await writeBlob("analysis_history.json", JSON.stringify(history));
-    log(`Analysis entry saved for ${date}`);
-  } catch (e: any) {
-    log(`WARNING: Failed to save analysis entry: ${e.message}`);
-  }
-}
+// Removed: saveAnalysisEntry() — skip writing analysis_history.json to reduce blob operations
+// Per-day analysis is now stored in last_forecast.json only
 
 async function loadYesterdayForecast(): Promise<number | null> {
   try {
@@ -238,9 +209,6 @@ async function runVercelPipeline(): Promise<void> {
     c3: parseFloat(coeff3.toFixed(2)),
   });
   log(`Action 5: today_forecast=${todayForecast.toFixed(2)} saved`);
-
-  // Save analysis entry for daily history
-  await saveAnalysisEntry(today, articleText, coeff1, coeff2, coeff3);
 
   // Action 6: Build Table Row
   let actualGoldPrice: number | null = null;
