@@ -2,11 +2,11 @@
  * Vercel Serverless Function — Gold Forecast Pipeline
  *
  * Triggered daily by Vercel Cron at 10:00 AM Toronto time (14:00 UTC / 15:00 UTC DST).
- * Runs the full 7-action pipeline with Vercel Blob for persistence.
+ * Runs the full 7-action pipeline with Upstash Redis for persistence.
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { put, list } from "@vercel/blob";
+import { Redis } from "@upstash/redis";
 import {
   log,
   logs,
@@ -20,39 +20,36 @@ import {
 
 const CSV_COLUMNS = "date,actual_gold_price,forecast,deviation";
 
-// ─── Vercel Blob Storage ────────────────────────────────────────────────────
+// ─── Upstash Redis Storage ─────────────────────────────────────────────────
 
-async function readBlob(filename: string): Promise<string | null> {
+const redis = Redis.fromEnv();
+
+async function readKey(key: string): Promise<string | null> {
   try {
-    const { blobs } = await list({ prefix: filename });
-    if (blobs.length === 0) return null;
-    // Fetch directly from blob URL without getDownloadUrl to save 1 operation
-    const resp = await fetch(blobs[0].url);
-    if (!resp.ok) return null;
-    return await resp.text();
+    const value = await redis.get<string>(key);
+    return value ?? null;
   } catch (e: any) {
-    log(`Blob read failed for ${filename}: ${e.message}`);
+    log(`Redis read failed for ${key}: ${e.message}`);
     return null;
   }
 }
 
-async function writeBlob(filename: string, content: string): Promise<void> {
+async function writeKey(key: string, value: string): Promise<void> {
   try {
-    await put(filename, content, { access: "public", addRandomSuffix: false });
+    await redis.set(key, value);
   } catch (e: any) {
-    log(`Blob write failed for ${filename}: ${e.message}`);
-    throw e; // Re-throw so caller knows write failed
+    log(`Redis write failed for ${key}: ${e.message}`);
+    throw e;
   }
 }
 
-// ─── Storage Functions (Blob-backed) ────────────────────────────────────────
+// ─── Storage Functions (Redis-backed) ──────────────────────────────────────
 
-// In-memory CSV cache to avoid stale CDN reads within a single pipeline run
 let csvCache: string | null = null;
 
 async function loadCsv(): Promise<string> {
   if (csvCache !== null) return csvCache;
-  const content = await readBlob("gold_forecast_history.csv");
+  const content = await readKey("gold_forecast_history.csv");
   csvCache = content ?? CSV_COLUMNS + "\n";
   return csvCache;
 }
@@ -71,19 +68,7 @@ async function appendCsvRow(
     deviation !== null ? deviation.toFixed(2) : "",
   ].join(",");
   const updated = existing + row + "\n";
-  await writeBlob("gold_forecast_history.csv", updated);
-  csvCache = updated;
-}
-
-async function updateLastRowDeviation(deviation: number): Promise<void> {
-  const content = (await loadCsv()).trimEnd();
-  const lines = content.split("\n");
-  if (lines.length < 2) return;
-  const parts = lines[lines.length - 1].split(",");
-  parts[3] = deviation.toFixed(2);
-  lines[lines.length - 1] = parts.join(",");
-  const updated = lines.join("\n") + "\n";
-  await writeBlob("gold_forecast_history.csv", updated);
+  await writeKey("gold_forecast_history.csv", updated);
   csvCache = updated;
 }
 
@@ -92,7 +77,7 @@ async function saveTodayForecast(
   forecast: number,
   extra?: { article?: string; c1?: number; c2?: number; c3?: number }
 ): Promise<void> {
-  await writeBlob(
+  await writeKey(
     "last_forecast.json",
     JSON.stringify({
       date,
@@ -102,12 +87,40 @@ async function saveTodayForecast(
   );
 }
 
-// Removed: saveAnalysisEntry() — skip writing analysis_history.json to reduce blob operations
-// Per-day analysis is now stored in last_forecast.json only
+async function saveAnalysisEntry(
+  date: string,
+  article: string,
+  c1: number,
+  c2: number,
+  c3: number
+): Promise<void> {
+  try {
+    const raw = await readKey("analysis_history.json");
+    const history: Array<{ date: string; article: string; c1: number; c2: number; c3: number }> =
+      raw ? JSON.parse(raw) : [];
+    const idx = history.findIndex((e) => e.date === date);
+    const entry = {
+      date,
+      article,
+      c1: parseFloat(c1.toFixed(2)),
+      c2: parseFloat(c2.toFixed(2)),
+      c3: parseFloat(c3.toFixed(2)),
+    };
+    if (idx >= 0) {
+      history[idx] = entry;
+    } else {
+      history.push(entry);
+    }
+    await writeKey("analysis_history.json", JSON.stringify(history));
+    log(`Analysis entry saved for ${date}`);
+  } catch (e: any) {
+    log(`WARNING: Failed to save analysis entry: ${e.message}`);
+  }
+}
 
 async function loadYesterdayForecast(): Promise<number | null> {
   try {
-    const raw = await readBlob("last_forecast.json");
+    const raw = await readKey("last_forecast.json");
     if (!raw) return null;
     const data = JSON.parse(raw);
     const today = torontoDateStr();
@@ -189,7 +202,7 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 4 ERROR: ${e.message}. Using coeff3=0`);
   }
 
-  // Load yesterday's forecast BEFORE Action 5 overwrites the blob
+  // Load yesterday's forecast BEFORE Action 5 overwrites the key
   let yesterdayForecast: number | null = null;
   try {
     yesterdayForecast = await loadYesterdayForecast();
@@ -209,6 +222,9 @@ async function runVercelPipeline(): Promise<void> {
     c3: parseFloat(coeff3.toFixed(2)),
   });
   log(`Action 5: today_forecast=${todayForecast.toFixed(2)} saved`);
+
+  // Save analysis entry for daily history
+  await saveAnalysisEntry(today, articleText, coeff1, coeff2, coeff3);
 
   // Action 6: Build Table Row
   let actualGoldPrice: number | null = null;
