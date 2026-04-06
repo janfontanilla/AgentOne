@@ -1,7 +1,7 @@
 /**
  * Vercel Serverless Function — Gold Forecast Pipeline
  *
- * Triggered daily by Vercel Cron at 10:00 AM Toronto time (14:00 UTC / 15:00 UTC DST).
+ * Triggered daily by Vercel Cron at 10:00 AM Toronto time (14:00 UTC).
  * Runs the full 7-action pipeline with Upstash Redis for persistence.
  */
 
@@ -19,6 +19,7 @@ import {
 } from "../gold_forecast_agent.js";
 
 const CSV_COLUMNS = "date,actual_gold_price,forecast,deviation";
+const MAX_ANALYSIS_HISTORY = 365;
 
 // ─── Upstash Redis Storage ─────────────────────────────────────────────────
 
@@ -47,13 +48,9 @@ async function writeKey(key: string, value: string): Promise<void> {
 
 // ─── Storage Functions (Redis-backed) ──────────────────────────────────────
 
-let csvCache: string | null = null;
-
 async function loadCsv(): Promise<string> {
-  if (csvCache !== null) return csvCache;
   const content = await readKey("gold_forecast_history.csv");
-  csvCache = content ?? CSV_COLUMNS + "\n";
-  return csvCache;
+  return content ?? CSV_COLUMNS + "\n";
 }
 
 async function appendCsvRow(
@@ -71,7 +68,7 @@ async function appendCsvRow(
   ].join(",");
   // Prevent duplicate rows for the same date — update existing row instead
   const lines = existing.trimEnd().split("\n");
-  const idx = lines.findIndex((l, i) => i > 0 && l.startsWith(date + ","));
+  const idx = lines.findIndex((l, i) => i > 0 && l.trim().startsWith(date + ","));
   if (idx >= 0) {
     lines[idx] = row;
   } else {
@@ -79,7 +76,7 @@ async function appendCsvRow(
   }
   const updated = lines.join("\n") + "\n";
   await writeKey("gold_forecast_history.csv", updated);
-  csvCache = updated;
+  log(`CSV row saved for ${date}`);
 }
 
 async function saveTodayForecast(
@@ -121,7 +118,11 @@ async function saveAnalysisEntry(
     } else {
       history.push(entry);
     }
-    await writeKey("analysis_history.json", JSON.stringify(history));
+    // Cap history to prevent unbounded growth
+    const trimmed = history.length > MAX_ANALYSIS_HISTORY
+      ? history.slice(-MAX_ANALYSIS_HISTORY)
+      : history;
+    await writeKey("analysis_history.json", JSON.stringify(trimmed));
     log(`Analysis entry saved for ${date}`);
   } catch (e: any) {
     log(`WARNING: Failed to save analysis entry: ${e.message}`);
@@ -147,9 +148,21 @@ async function loadYesterdayForecast(): Promise<number | null> {
 // ─── Pipeline (Vercel version) ──────────────────────────────────────────────
 
 async function runVercelPipeline(): Promise<void> {
-  csvCache = null; // Reset in-memory cache for fresh pipeline run
   const today = torontoDateStr();
   log(`=== Gold Forecast Daily — ${today} ===`);
+
+  // Load yesterday's forecast FIRST — before anything overwrites it
+  let yesterdayForecast: number | null = null;
+  try {
+    yesterdayForecast = await loadYesterdayForecast();
+    if (yesterdayForecast !== null) {
+      log(`Loaded yesterday's forecast: $${yesterdayForecast.toFixed(2)}`);
+    } else {
+      log("No yesterday forecast found (first run or same-day re-run).");
+    }
+  } catch (e: any) {
+    log(`WARNING: Failed to load yesterday forecast: ${e.message}`);
+  }
 
   // Action 1: News Article
   let articleText = "";
@@ -212,26 +225,10 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 4 ERROR: ${e.message}. Using coeff3=0`);
   }
 
-  // Load yesterday's forecast BEFORE Action 5 overwrites the key
-  let yesterdayForecast: number | null = null;
-  try {
-    yesterdayForecast = await loadYesterdayForecast();
-  } catch (e: any) {
-    log(`WARNING: Failed to load yesterday forecast: ${e.message}`);
-  }
-
   // Action 5: Display Forecast
   const todayForecast = (coeff1 + coeff2 + coeff3) / 3;
   log(`Action 5: Result of Action #1: ${articleText}\nForecast coefficient (average of C1, C2, C3): ${todayForecast.toFixed(2)}`);
   log(`Action 5: C1=${coeff1.toFixed(2)}%, C2=${coeff2.toFixed(2)}%, C3=${coeff3.toFixed(2)}%`);
-
-  await saveTodayForecast(today, todayForecast, {
-    article: articleText,
-    c1: parseFloat(coeff1.toFixed(2)),
-    c2: parseFloat(coeff2.toFixed(2)),
-    c3: parseFloat(coeff3.toFixed(2)),
-  });
-  log(`Action 5: today_forecast=${todayForecast.toFixed(2)} saved`);
 
   // Save analysis entry for daily history
   await saveAnalysisEntry(today, articleText, coeff1, coeff2, coeff3);
@@ -244,9 +241,9 @@ async function runVercelPipeline(): Promise<void> {
     actualGoldPrice = await fetchKitcoGoldPrice();
     log(`Action 6: Actual gold price: $${actualGoldPrice.toFixed(2)}`);
     if (yesterdayForecast !== null) {
-      log(`Action 6: Yesterday's forecast: ${yesterdayForecast}`);
+      log(`Action 6: Yesterday's forecast: $${yesterdayForecast.toFixed(2)}`);
     } else {
-      log("Action 6: No yesterday forecast found (first run).");
+      log("Action 6: No yesterday forecast (first run).");
     }
 
     // Calculate deviation inline if yesterday's forecast exists
@@ -256,8 +253,8 @@ async function runVercelPipeline(): Promise<void> {
     }
 
     await appendCsvRow(today, actualGoldPrice, yesterdayForecast, deviation);
-    log("Action 6: Row appended to CSV");
 
+    // Convert today's % forecast to a dollar forecast for tomorrow
     const dollarForecast = actualGoldPrice * (1 + todayForecast / 100);
     await saveTodayForecast(today, dollarForecast, {
       article: articleText,
@@ -268,13 +265,22 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 6: Dollar forecast for tomorrow: $${dollarForecast.toFixed(2)}`);
   } catch (e: any) {
     log(`Action 6 ERROR: ${e.message}. Skipping table update.`);
+    // Even if gold price fails, save the percentage forecast so tomorrow
+    // doesn't lose the prediction entirely
+    await saveTodayForecast(today, todayForecast, {
+      article: articleText,
+      c1: parseFloat(coeff1.toFixed(2)),
+      c2: parseFloat(coeff2.toFixed(2)),
+      c3: parseFloat(coeff3.toFixed(2)),
+    });
+    log(`Action 6: Saved percentage forecast as fallback: ${todayForecast.toFixed(2)}`);
   }
 
-  // Action 7: Deviation (log result, update if needed)
+  // Action 7: Deviation (log result)
   try {
     if (actualGoldPrice !== null && yesterdayForecast !== null) {
       const deviation = actualGoldPrice - yesterdayForecast;
-      log(`Action 7: Deviation = $${actualGoldPrice.toFixed(2)} - ${yesterdayForecast.toFixed(2)} = ${deviation.toFixed(2)}`);
+      log(`Action 7: Deviation = $${actualGoldPrice.toFixed(2)} - $${yesterdayForecast.toFixed(2)} = ${deviation.toFixed(2)}`);
     } else if (actualGoldPrice === null) {
       log("Action 7: Skipped — actual gold price unavailable.");
     } else {
