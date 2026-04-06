@@ -26,8 +26,10 @@ const redis = Redis.fromEnv();
 
 async function readKey(key: string): Promise<string | null> {
   try {
-    const value = await redis.get<string>(key);
-    return value ?? null;
+    const value = await redis.get(key);
+    if (value === null || value === undefined) return null;
+    // Upstash auto-deserializes JSON — ensure we always return a string
+    return typeof value === "string" ? value : JSON.stringify(value);
   } catch (e: any) {
     log(`Redis read failed for ${key}: ${e.message}`);
     return null;
