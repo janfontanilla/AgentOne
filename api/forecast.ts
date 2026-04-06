@@ -69,7 +69,15 @@ async function appendCsvRow(
     forecast !== null ? forecast.toFixed(2) : "",
     deviation !== null ? deviation.toFixed(2) : "",
   ].join(",");
-  const updated = existing + row + "\n";
+  // Prevent duplicate rows for the same date — update existing row instead
+  const lines = existing.trimEnd().split("\n");
+  const idx = lines.findIndex((l, i) => i > 0 && l.startsWith(date + ","));
+  if (idx >= 0) {
+    lines[idx] = row;
+  } else {
+    lines.push(row);
+  }
+  const updated = lines.join("\n") + "\n";
   await writeKey("gold_forecast_history.csv", updated);
   csvCache = updated;
 }
