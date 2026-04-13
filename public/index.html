@@ -29,6 +29,7 @@
     }
     .badge-live { background: #1a3a2a; color: #3fb950; }
     .badge-ai { background: #2a1f0d; color: #f0b429; }
+    .badge-v2 { background: #1a2a3a; color: #58a6ff; }
 
     /* Cards */
     .cards {
@@ -60,6 +61,7 @@
     .green { color: #3fb950; }
     .red { color: #f85149; }
     .neutral { color: #8b949e; }
+    .blue { color: #58a6ff; }
 
     /* Analysis section */
     .section-title {
@@ -85,7 +87,7 @@
       color: #e1e4e8;
       margin: 0.5rem 0;
     }
-    .analysis-box .forecast-line {
+    .forecast-line {
       color: #f0b429;
       font-weight: 600;
       margin-top: 0.8rem;
@@ -95,23 +97,78 @@
       color: #6e7681;
       font-size: 0.8rem;
       margin-top: 0.3rem;
+      margin-bottom: 1rem;
     }
-    .coefficients {
+
+    /* Signal groups */
+    .signal-groups {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.8rem;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
       margin-top: 1rem;
     }
-    .coeff {
+    .signal-group {
       background: #1c2129;
       border: 1px solid #30363d;
       border-radius: 6px;
-      padding: 0.7rem 0.8rem;
-      text-align: center;
+      padding: 0.8rem;
     }
+    .signal-group-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .signal-group-label .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-direct { background: #3fb950; }
+    .dot-inverse { background: #58a6ff; }
+    .label-direct { color: #3fb950; }
+    .label-inverse { color: #58a6ff; }
+
+    .coeff-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .coeff {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 5px;
+      padding: 0.5rem 0.7rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .coeff-left { display: flex; flex-direction: column; gap: 0.1rem; }
     .coeff-label { font-size: 0.7rem; color: #8b949e; text-transform: uppercase; }
-    .coeff-value { font-size: 1.1rem; font-weight: 600; margin-top: 0.2rem; }
-    .coeff-hint { font-size: 0.65rem; color: #6e7681; margin-top: 0.3rem; }
+    .coeff-hint { font-size: 0.62rem; color: #484f58; }
+    .coeff-right { text-align: right; }
+    .coeff-value { font-size: 1rem; font-weight: 600; }
+    .coeff-contrib { font-size: 0.65rem; color: #6e7681; margin-top: 0.1rem; }
+
+    /* Net signal bar */
+    .net-signal {
+      margin-top: 1rem;
+      background: #1c2129;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.7rem 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .net-signal-label { font-size: 0.75rem; color: #8b949e; }
+    .net-signal-value { font-size: 1.1rem; font-weight: 700; }
+    .net-signal-sub { font-size: 0.7rem; color: #6e7681; margin-top: 0.1rem; }
 
     /* Table */
     table {
@@ -158,6 +215,32 @@
     .accuracy-label { font-size: 0.8rem; color: #8b949e; }
     .accuracy-value { font-size: 1rem; font-weight: 600; }
 
+    /* Expanded analysis row */
+    .expand-signals {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+      margin-top: 0.6rem;
+    }
+    .expand-group-title {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 700;
+      margin-bottom: 0.3rem;
+    }
+    .expand-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.72rem;
+      margin: 0.15rem 0.15rem 0.15rem 0;
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 4px;
+      padding: 0.2rem 0.4rem;
+    }
+
     .footer {
       margin-top: 2rem;
       text-align: center;
@@ -168,10 +251,10 @@
 </head>
 <body>
   <div class="container">
-    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span></h1>
+    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span> <span class="badge badge-v2">Stage 2</span></h1>
     <p class="subtitle">
       <span class="badge badge-ai">Llama 3.3 70B</span>
-      AI-powered gold price prediction &mdash; runs every day at 10:00 AM (Toronto)
+      AI-powered gold price prediction &mdash; 6 market signals &mdash; runs every day at 10:00 AM (Toronto)
     </p>
 
     <p class="last-run" id="last-run"></p>
@@ -186,7 +269,7 @@
       <div class="card">
         <div class="card-label">Our Prediction for Tomorrow</div>
         <div class="card-value" id="forecast">--</div>
-        <div class="card-hint" id="forecast-hint">Where we think gold will be tomorrow, based on today's 3 market signals</div>
+        <div class="card-hint" id="forecast-hint">Based on 3 direct + 3 inverse market signals</div>
       </div>
       <div class="card">
         <div class="card-label">How Close Were We?</div>
@@ -196,8 +279,8 @@
     </div>
 
     <!-- AI Analysis -->
-    <h2 class="section-title">News Analysis &amp; Forecast</h2>
-    <p class="section-desc">Every morning, the agent scrapes up to 20 sources — Kitco, Reuters, Yahoo Finance, MarketWatch, CNBC, FXStreet, BullionVault, and more — then Llama 3.3 70B reads all of them and writes a one-sentence outlook.</p>
+    <h2 class="section-title">News Analysis &amp; Market Signals</h2>
+    <p class="section-desc">Every morning, the agent scrapes up to 20 sources then Llama 3.3 70B synthesizes a one-sentence outlook. Six market signals are combined — three direct (rise = gold up) and three inverse (rise = gold down).</p>
     <div class="analysis-box" id="analysis-box">
       <div class="empty">Waiting for first pipeline run...</div>
     </div>
@@ -211,15 +294,15 @@
 
     <!-- History Table -->
     <h2 class="section-title">Prediction History</h2>
-    <p class="section-desc">Each row = one day. We record the real price, what we predicted, and how far off we were. Click a row to see the AI analysis.</p>
+    <p class="section-desc">Each row = one day. Click a row to see the full signal breakdown.</p>
     <div id="accuracy-summary"></div>
     <div id="table-container">
       <div class="loading">Loading forecast data...</div>
     </div>
 
     <div class="footer">
-      Gold Forecast Daily AI Agent V1<br>
-      kitco.com + Yahoo Finance &bull; Groq Llama 3.3 70B &bull; Daily 10 AM Toronto
+      Gold Forecast Daily AI Agent — Stage 2<br>
+      kitco.com + Yahoo Finance &bull; Groq Llama 3.3 70B &bull; 6 Market Signals &bull; Daily 10 AM Toronto
     </div>
   </div>
 
@@ -239,6 +322,43 @@
       return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     }
 
+    function pctStr(val, decimals) {
+      if (val == null || isNaN(val)) return '--';
+      const n = parseFloat(val);
+      return (n >= 0 ? '+' : '') + n.toFixed(decimals != null ? decimals : 2) + '%';
+    }
+
+    function pctClass(val) {
+      if (val == null || isNaN(val)) return 'neutral';
+      return parseFloat(val) >= 0 ? 'green' : 'red';
+    }
+
+    // For inverse signals: positive raw = negative gold contribution
+    function invContrib(raw) {
+      if (raw == null || isNaN(raw)) return '--';
+      const n = -parseFloat(raw);
+      return (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+    }
+
+    function invContribClass(raw) {
+      if (raw == null || isNaN(raw)) return 'neutral';
+      return -parseFloat(raw) >= 0 ? 'green' : 'red';
+    }
+
+    // Net signal using all 6 indices
+    function calcNetSignal(row) {
+      const c1 = fmt(row.c1), c2 = fmt(row.c2), c3 = fmt(row.c3);
+      const i1 = fmt(row.i1), i2 = fmt(row.i2), i3 = fmt(row.i3);
+      const hasAll = [c1, c2, c3].every(v => v !== null);
+      if (!hasAll) return null;
+      const hasInverse = [i1, i2, i3].every(v => v !== null);
+      if (hasInverse) {
+        return (c1 + c2 + c3 + (-i1) + (-i2) + (-i3)) / 6;
+      }
+      // Fallback: old 3-index signal for historical rows
+      return (c1 + c2 + c3) / 3;
+    }
+
     async function loadData() {
       try {
         const resp = await fetch('/api/history');
@@ -255,9 +375,9 @@
           return;
         }
 
-        // --- Cards ---
         const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
 
+        // --- Cards ---
         if (data.rows.length > 0) {
           const latest = data.rows[0];
           const price = fmt(latest.actual_gold_price);
@@ -268,8 +388,7 @@
           const dev = fmt(latest.deviation);
           if (dev !== null) {
             const devEl = document.getElementById('deviation');
-            devEl.textContent = (dev >= 0 ? '+' : '') + dollar(Math.abs(dev));
-            if (dev < 0) devEl.textContent = '-' + dollar(Math.abs(dev));
+            devEl.textContent = (dev >= 0 ? '+' : '-') + dollar(Math.abs(dev));
             devEl.className = 'card-value ' + (Math.abs(dev) < 50 ? 'green' : dev >= 0 ? 'green' : 'red');
             const pctOff = price ? ((Math.abs(dev) / price) * 100).toFixed(2) : null;
             document.getElementById('deviation-hint').textContent =
@@ -288,7 +407,6 @@
             const fc = document.getElementById('forecast');
             fc.textContent = dollar(fcVal);
             fc.className = 'card-value gold';
-            // Show predicted direction
             if (data.rows.length > 0) {
               const currentPrice = fmt(data.rows[0].actual_gold_price);
               if (currentPrice) {
@@ -315,33 +433,54 @@
           let html = '';
           if (lf.article) {
             html += '<div style="font-size:0.75rem;color:#8b949e;margin-bottom:0.3rem;">AI Summary (Llama 3.3 70B) &mdash; based on up to 20 scraped news sources</div>';
-            html += '<div class="article-text">"' + esc(lf.article) + '"</div>';
+            html += '<div class="article-text">&ldquo;' + esc(lf.article) + '&rdquo;</div>';
           }
-          const avgCoeff = (lf.c1 != null && lf.c2 != null && lf.c3 != null)
-            ? ((lf.c1 + lf.c2 + lf.c3) / 3).toFixed(2)
-            : null;
-          if (avgCoeff !== null) {
-            const dir = parseFloat(avgCoeff) >= 0 ? 'upward' : 'downward';
-            html += '<div class="forecast-line">Overall signal: ' + (parseFloat(avgCoeff) >= 0 ? '+' : '') + avgCoeff + '% ' + dir + ' pressure</div>';
-            html += '<div class="forecast-explain">This is the average of 3 market signals below. Positive = markets suggest gold goes up. Negative = down.</div>';
+
+          const hasInverse = lf.i1 != null && lf.i2 != null && lf.i3 != null;
+          const hasDirect = lf.c1 != null && lf.c2 != null && lf.c3 != null;
+
+          if (hasDirect) {
+            const netSignal = hasInverse
+              ? ((lf.c1 + lf.c2 + lf.c3 + (-lf.i1) + (-lf.i2) + (-lf.i3)) / 6)
+              : ((lf.c1 + lf.c2 + lf.c3) / 3);
+            const dir = netSignal >= 0 ? 'upward' : 'downward';
+            const netCls = netSignal >= 0 ? 'green' : 'red';
+            html += '<div class="forecast-line">Net signal: <span class="' + netCls + '">' + (netSignal >= 0 ? '+' : '') + netSignal.toFixed(2) + '%</span> ' + dir + ' pressure</div>';
+            html += '<div class="forecast-explain">Average of ' + (hasInverse ? '6 indices (3 direct + 3 inverse)' : '3 direct indices') + '. Positive = gold predicted to rise tomorrow.</div>';
+
+            html += '<div class="signal-groups">';
+
+            // Direct signals
+            html += '<div class="signal-group">';
+            html += '<div class="signal-group-label label-direct"><span class="dot dot-direct"></span>Direct Signals</div>';
+            html += '<div class="coeff-row">';
+            html += signalPill('Mining Stocks', 'NEM &amp; Barrick (GOLD) avg', lf.c1, false);
+            html += signalPill('AUD/USD Forex', 'Australian Dollar vs USD', lf.c2, false);
+            html += signalPill('Silver (SLV)', 'iShares Silver Trust ETF', lf.c3, false);
+            html += '</div></div>';
+
+            // Inverse signals
+            html += '<div class="signal-group">';
+            html += '<div class="signal-group-label label-inverse"><span class="dot dot-inverse"></span>Inverse Signals <span style="font-size:0.6rem;color:#6e7681;font-weight:400">(value flipped for gold forecast)</span></div>';
+            html += '<div class="coeff-row">';
+            if (hasInverse) {
+              html += signalPill('US Equities', 'SPY, DIA, QQQ, IWM avg', lf.i1, true);
+              html += signalPill('Dollar Index', 'DXY (DX-Y.NYB)', lf.i2, true);
+              html += signalPill('Bond Yields', 'TLT 20+ Yr Treasury ETF', lf.i3, true);
+            } else {
+              html += '<div style="font-size:0.75rem;color:#484f58;padding:0.4rem">Inverse indices available from next run</div>';
+            }
+            html += '</div></div>';
+
+            html += '</div>'; // .signal-groups
           }
-          if (lf.c1 != null || lf.c2 != null || lf.c3 != null) {
-            html += '<div class="coefficients">';
-            html += '<div class="coeff"><div class="coeff-label">Mining Stocks</div><div class="coeff-value ' + (lf.c1 >= 0 ? 'green' : 'red') + '">' + (lf.c1 >= 0 ? '+' : '') + (lf.c1 != null ? lf.c1.toFixed(2) : '--') + '%</div><div class="coeff-hint">Newmont (NEM) &amp; Barrick (GOLD) avg 24h change</div></div>';
-            html += '<div class="coeff"><div class="coeff-label">Forex Signal</div><div class="coeff-value ' + (lf.c2 >= 0 ? 'green' : 'red') + '">' + (lf.c2 >= 0 ? '+' : '') + (lf.c2 != null ? lf.c2.toFixed(2) : '--') + '%</div><div class="coeff-hint">Australian Dollar vs US Dollar 24h change</div></div>';
-            html += '<div class="coeff"><div class="coeff-label">Silver Price</div><div class="coeff-value ' + (lf.c3 >= 0 ? 'green' : 'red') + '">' + (lf.c3 >= 0 ? '+' : '') + (lf.c3 != null ? lf.c3.toFixed(2) : '--') + '%</div><div class="coeff-hint">iShares Silver Trust (SLV) 24h change</div></div>';
-            html += '</div>';
-          }
-          if (html) {
-            document.getElementById('analysis-box').innerHTML = html;
-          }
+
+          if (html) document.getElementById('analysis-box').innerHTML = html;
         }
 
         // --- Accuracy Summary ---
         if (data.rows.length > 1) {
-          const deviations = data.rows
-            .map(r => fmt(r.deviation))
-            .filter(d => d !== null);
+          const deviations = data.rows.map(r => fmt(r.deviation)).filter(d => d !== null);
           if (deviations.length > 0) {
             const avgAbsDev = deviations.reduce((s, d) => s + Math.abs(d), 0) / deviations.length;
             const avgPrice = data.rows.reduce((s, r) => s + (fmt(r.actual_gold_price) || 0), 0) / data.rows.length;
@@ -364,7 +503,7 @@
           return;
         }
 
-        let thead = '<table><thead><tr><th>Date</th><th>Actual Price</th><th>We Predicted</th><th>Off By</th><th>Signal</th></tr></thead><tbody>';
+        let thead = '<table><thead><tr><th>Date</th><th>Actual Price</th><th>We Predicted</th><th>Off By</th><th>Net Signal</th></tr></thead><tbody>';
         let rows = '';
         for (const row of data.rows) {
           const price = fmt(row.actual_gold_price);
@@ -373,12 +512,12 @@
           const isToday = row.date === today;
           const devClass = devVal !== null ? (Math.abs(devVal) < 50 ? 'green' : 'red') : 'empty';
 
-          // Signal column: overall % from coefficients
+          // Net signal column
+          const net = calcNetSignal(row);
           let signalHtml = '<span class="empty">--</span>';
-          if (row.c1 != null && row.c2 != null && row.c3 != null) {
-            const avg = ((row.c1 + row.c2 + row.c3) / 3);
-            const cls = avg >= 0 ? 'green' : 'red';
-            signalHtml = '<span class="' + cls + '">' + (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%</span>';
+          if (net !== null) {
+            const cls = net >= 0 ? 'green' : 'red';
+            signalHtml = '<span class="' + cls + '">' + (net >= 0 ? '+' : '') + net.toFixed(2) + '%</span>';
           }
 
           rows += '<tr' + (isToday ? ' class="today-row"' : '') + ' style="cursor:pointer" onclick="toggleAnalysis(this)">';
@@ -394,28 +533,43 @@
           rows += '<td>' + signalHtml + '</td>';
           rows += '</tr>';
 
-          // Expandable analysis sub-row (hidden by default)
-          if (row.article) {
+          // Expandable analysis sub-row
+          const hasAny = row.article || row.c1 != null;
+          if (hasAny) {
             rows += '<tr class="analysis-row" style="display:none">';
             rows += '<td colspan="5" style="padding:0.8rem 1rem;background:#1c2129;border-bottom:1px solid #30363d">';
-            rows += '<div style="font-size:0.75rem;color:#8b949e;margin-bottom:0.3rem">AI Analysis for ' + esc(row.date) + '</div>';
-            rows += '<div style="font-size:0.9rem;color:#e1e4e8;line-height:1.4">"' + esc(row.article) + '"</div>';
+            if (row.article) {
+              rows += '<div style="font-size:0.75rem;color:#8b949e;margin-bottom:0.3rem">AI Analysis for ' + esc(row.date) + '</div>';
+              rows += '<div style="font-size:0.9rem;color:#e1e4e8;line-height:1.4;margin-bottom:0.6rem">&ldquo;' + esc(row.article) + '&rdquo;</div>';
+            }
             if (row.c1 != null) {
-              rows += '<div style="margin-top:0.5rem;display:flex;gap:1rem;font-size:0.75rem;color:#8b949e">';
-              rows += '<span>Mining: <span class="' + (row.c1 >= 0 ? 'green' : 'red') + '">' + (row.c1 >= 0 ? '+' : '') + row.c1.toFixed(2) + '%</span></span>';
-              rows += '<span>Forex: <span class="' + (row.c2 >= 0 ? 'green' : 'red') + '">' + (row.c2 >= 0 ? '+' : '') + row.c2.toFixed(2) + '%</span></span>';
-              rows += '<span>Silver: <span class="' + (row.c3 >= 0 ? 'green' : 'red') + '">' + (row.c3 >= 0 ? '+' : '') + row.c3.toFixed(2) + '%</span></span>';
+              rows += '<div class="expand-signals">';
+              // Direct group
+              rows += '<div>';
+              rows += '<div class="expand-group-title label-direct">Direct Signals</div>';
+              rows += expandPill('Mining', row.c1, false);
+              rows += expandPill('AUD/USD', row.c2, false);
+              rows += expandPill('Silver', row.c3, false);
               rows += '</div>';
+              // Inverse group
+              rows += '<div>';
+              rows += '<div class="expand-group-title label-inverse">Inverse Signals (flipped)</div>';
+              if (row.i1 != null) {
+                rows += expandPill('Equities', row.i1, true);
+                rows += expandPill('DXY', row.i2, true);
+                rows += expandPill('Bonds', row.i3, true);
+              } else {
+                rows += '<span style="font-size:0.72rem;color:#484f58">Stage 1 data</span>';
+              }
+              rows += '</div>';
+              rows += '</div>'; // .expand-signals
             }
             rows += '</td></tr>';
           }
         }
         document.getElementById('table-container').innerHTML = thead + rows + '</tbody></table>';
 
-        // Render chart
-        if (data.rows.length > 0) {
-          renderChart(data.rows);
-        }
+        if (data.rows.length > 0) renderChart(data.rows);
 
       } catch (e) {
         document.getElementById('table-container').innerHTML =
@@ -423,10 +577,42 @@
       }
     }
 
+    // Build a signal pill for the analysis box
+    function signalPill(label, hint, rawVal, isInverse) {
+      const n = rawVal != null ? parseFloat(rawVal) : null;
+      const rawCls = n !== null ? (n >= 0 ? 'green' : 'red') : 'neutral';
+      const rawStr = n !== null ? (n >= 0 ? '+' : '') + n.toFixed(2) + '%' : '--';
+      const contribStr = isInverse && n !== null ? ((-n) >= 0 ? '+' : '') + (-n).toFixed(2) + '%' : null;
+      const contribCls = isInverse && n !== null ? ((-n) >= 0 ? 'green' : 'red') : '';
+
+      let html = '<div class="coeff">';
+      html += '<div class="coeff-left"><div class="coeff-label">' + label + '</div><div class="coeff-hint">' + hint + '</div></div>';
+      html += '<div class="coeff-right">';
+      html += '<div class="coeff-value ' + rawCls + '">' + rawStr + '</div>';
+      if (contribStr) {
+        html += '<div class="coeff-contrib">contributes <span class="' + contribCls + '">' + contribStr + '</span></div>';
+      }
+      html += '</div></div>';
+      return html;
+    }
+
+    // Build a compact pill for the expanded table row
+    function expandPill(label, rawVal, isInverse) {
+      const n = rawVal != null ? parseFloat(rawVal) : null;
+      const rawCls = n !== null ? (n >= 0 ? 'green' : 'red') : 'neutral';
+      const rawStr = n !== null ? (n >= 0 ? '+' : '') + n.toFixed(2) + '%' : '--';
+      let inner = '<span style="color:#6e7681">' + esc(label) + ':</span> <span class="' + rawCls + '">' + rawStr + '</span>';
+      if (isInverse && n !== null) {
+        const contrib = -n;
+        const cls = contrib >= 0 ? 'green' : 'red';
+        inner += ' <span style="color:#484f58">&rarr;</span> <span class="' + cls + '">' + (contrib >= 0 ? '+' : '') + contrib.toFixed(2) + '%</span>';
+      }
+      return '<span class="expand-pill">' + inner + '</span>';
+    }
+
     let chartInstance = null;
 
     function renderChart(rows) {
-      // rows are newest-first from API, reverse for chronological order
       const chronological = [...rows].reverse();
       const labels = chronological.map(r => r.date);
       const actuals = chronological.map(r => { const v = parseFloat(r.actual_gold_price); return isNaN(v) ? null : v; });
@@ -469,9 +655,7 @@
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              labels: { color: '#8b949e', font: { size: 12 } },
-            },
+            legend: { labels: { color: '#8b949e', font: { size: 12 } } },
             tooltip: {
               callbacks: {
                 label: function(ctx) {
@@ -481,16 +665,9 @@
             }
           },
           scales: {
-            x: {
-              ticks: { color: '#6e7681', font: { size: 11 } },
-              grid: { color: '#21262d' },
-            },
+            x: { ticks: { color: '#6e7681', font: { size: 11 } }, grid: { color: '#21262d' } },
             y: {
-              ticks: {
-                color: '#6e7681',
-                font: { size: 11 },
-                callback: function(v) { return '$' + v.toLocaleString(); }
-              },
+              ticks: { color: '#6e7681', font: { size: 11 }, callback: function(v) { return '$' + v.toLocaleString(); } },
               grid: { color: '#21262d' },
             },
           },
@@ -506,7 +683,6 @@
     }
 
     loadData();
-    // Auto-refresh every 60 seconds
     setInterval(loadData, 60000);
   </script>
 </body>

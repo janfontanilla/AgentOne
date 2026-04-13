@@ -1,6 +1,8 @@
 /**
  * Vercel API Route — Returns forecast history data
  * Used by the dashboard to display the CSV table and latest forecast.
+ *
+ * Stage 2: Extended to return i1, i2, i3 (inverse index raw values) per row.
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
@@ -34,13 +36,16 @@ export default async function handler(
       forecast: string;
       deviation: string;
       article?: string;
-      c1?: number;
-      c2?: number;
-      c3?: number;
+      c1?: number; c2?: number; c3?: number;
+      i1?: number; i2?: number; i3?: number;
     }> = [];
 
     // Parse analysis history into a lookup by date
-    let analysisMap: Record<string, { article: string; c1: number; c2: number; c3: number }> = {};
+    let analysisMap: Record<string, {
+      article: string;
+      c1: number; c2: number; c3: number;
+      i1?: number; i2?: number; i3?: number;
+    }> = {};
     if (analysisJson) {
       try {
         const entries = JSON.parse(analysisJson);
@@ -62,7 +67,15 @@ export default async function handler(
           actual_gold_price: parts[1] || "",
           forecast: parts[2] || "",
           deviation: parts[3] || "",
-          ...(analysis ? { article: analysis.article, c1: analysis.c1, c2: analysis.c2, c3: analysis.c3 } : {}),
+          ...(analysis ? {
+            article: analysis.article,
+            c1: analysis.c1,
+            c2: analysis.c2,
+            c3: analysis.c3,
+            i1: analysis.i1,
+            i2: analysis.i2,
+            i3: analysis.i3,
+          } : {}),
         });
       }
     }

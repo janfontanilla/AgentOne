@@ -2,7 +2,10 @@
  * Vercel Serverless Function — Gold Forecast Pipeline
  *
  * Triggered daily by Vercel Cron at 10:00 AM Toronto time (14:00 UTC).
- * Runs the full 7-action pipeline with Upstash Redis for persistence.
+ * Runs the full 10-action pipeline with Upstash Redis for persistence.
+ *
+ * Stage 2: Added three inversely correlated indices (I1, I2, I3).
+ * New forecast = avg(C1, C2, C3, -I1, -I2, -I3) / 6
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
@@ -82,7 +85,11 @@ async function appendCsvRow(
 async function saveTodayForecast(
   date: string,
   forecast: number,
-  extra?: { article?: string; c1?: number; c2?: number; c3?: number }
+  extra?: {
+    article?: string;
+    c1?: number; c2?: number; c3?: number;
+    i1?: number; i2?: number; i3?: number;
+  }
 ): Promise<void> {
   await writeKey(
     "last_forecast.json",
@@ -97,14 +104,16 @@ async function saveTodayForecast(
 async function saveAnalysisEntry(
   date: string,
   article: string,
-  c1: number,
-  c2: number,
-  c3: number
+  c1: number, c2: number, c3: number,
+  i1: number, i2: number, i3: number
 ): Promise<void> {
   try {
     const raw = await readKey("analysis_history.json");
-    const history: Array<{ date: string; article: string; c1: number; c2: number; c3: number }> =
-      raw ? JSON.parse(raw) : [];
+    const history: Array<{
+      date: string; article: string;
+      c1: number; c2: number; c3: number;
+      i1: number; i2: number; i3: number;
+    }> = raw ? JSON.parse(raw) : [];
     const idx = history.findIndex((e) => e.date === date);
     const entry = {
       date,
@@ -112,6 +121,9 @@ async function saveAnalysisEntry(
       c1: parseFloat(c1.toFixed(2)),
       c2: parseFloat(c2.toFixed(2)),
       c3: parseFloat(c3.toFixed(2)),
+      i1: parseFloat(i1.toFixed(2)),
+      i2: parseFloat(i2.toFixed(2)),
+      i3: parseFloat(i3.toFixed(2)),
     };
     if (idx >= 0) {
       history[idx] = entry;
@@ -175,7 +187,7 @@ async function runVercelPipeline(): Promise<void> {
     articleText = "Gold price outlook analysis could not be generated today.";
   }
 
-  // Action 2: NEM + GOLD (Coefficient 1)
+  // Action 2: NEM + GOLD (Coefficient 1 — direct)
   let coeff1 = 0;
   try {
     log("Action 2: Fetching NEM and GOLD stock prices...");
@@ -201,7 +213,7 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 2 ERROR: ${e.message}. Using coeff1=0`);
   }
 
-  // Action 3: AUD/USD (Coefficient 2)
+  // Action 3: AUD/USD (Coefficient 2 — direct)
   let coeff2 = 0;
   try {
     log("Action 3: Fetching AUD/USD exchange rate...");
@@ -213,7 +225,7 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 3 ERROR: ${e.message}. Using coeff2=0`);
   }
 
-  // Action 4: SLV (Coefficient 3)
+  // Action 4: SLV (Coefficient 3 — direct)
   let coeff3 = 0;
   try {
     log("Action 4: Fetching SLV (iShares Silver Trust) price...");
@@ -225,28 +237,83 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 4 ERROR: ${e.message}. Using coeff3=0`);
   }
 
-  // Action 5: Display Forecast
-  const todayForecast = (coeff1 + coeff2 + coeff3) / 3;
-  log(`Action 5: Result of Action #1: ${articleText}\nForecast coefficient (average of C1, C2, C3): ${todayForecast.toFixed(2)}`);
-  log(`Action 5: C1=${coeff1.toFixed(2)}%, C2=${coeff2.toFixed(2)}%, C3=${coeff3.toFixed(2)}%`);
+  // Action 5: US Equity Index (Index 1 — inverse)
+  // Average of S&P 500 (SPY), Dow Jones (DIA), NASDAQ-100 (QQQ), Russell 2000 (IWM)
+  // Rising equities are inversely correlated with gold — contribution is negated
+  let inv1 = 0;
+  try {
+    log("Action 5: Fetching US Equity Index (SPY, DIA, QQQ, IWM)...");
+    const equitySymbols = ["SPY", "DIA", "QQQ", "IWM"];
+    const equityPcts: number[] = [];
+    for (const sym of equitySymbols) {
+      try {
+        const q = await fetchYahooQuote(sym);
+        const pct = toPercent(q.current, q.prev);
+        equityPcts.push(pct);
+        log(`${sym}: ${q.prev.toFixed(2)} → ${q.current.toFixed(2)} (${pct.toFixed(2)}%)`);
+      } catch (e: any) {
+        log(`Action 5 WARNING: ${sym} fetch failed, excluding from avg: ${e.message}`);
+      }
+    }
+    if (equityPcts.length > 0) {
+      inv1 = equityPcts.reduce((a, b) => a + b, 0) / equityPcts.length;
+    }
+    log(`Index 1 raw (US Equities avg): ${inv1.toFixed(2)}% → forecast contribution: ${(-inv1).toFixed(2)}%`);
+  } catch (e: any) {
+    log(`Action 5 ERROR: ${e.message}. Using inv1=0`);
+  }
+
+  // Action 6: U.S. Dollar Index (Index 2 — inverse)
+  // A stronger dollar pushes gold down — contribution is negated
+  let inv2 = 0;
+  try {
+    log("Action 6: Fetching U.S. Dollar Index (DX-Y.NYB)...");
+    const dxy = await fetchYahooQuote("DX-Y.NYB");
+    inv2 = toPercent(dxy.current, dxy.prev);
+    log(`DXY: ${dxy.prev.toFixed(3)} → ${dxy.current.toFixed(3)} (${inv2.toFixed(2)}%)`);
+    log(`Index 2 raw (DXY): ${inv2.toFixed(2)}% → forecast contribution: ${(-inv2).toFixed(2)}%`);
+  } catch (e: any) {
+    log(`Action 6 ERROR: ${e.message}. Using inv2=0`);
+  }
+
+  // Action 7: Bond Yields via TLT (Index 3 — inverse)
+  // Rising TLT (bond prices up = yields down) is positively correlated with gold
+  // But we store raw TLT % and negate it as the inverse index contribution
+  let inv3 = 0;
+  try {
+    log("Action 7: Fetching Bond Yields via TLT (iShares 20+ Year Treasury)...");
+    const tlt = await fetchYahooQuote("TLT");
+    inv3 = toPercent(tlt.current, tlt.prev);
+    log(`TLT: ${tlt.prev.toFixed(2)} → ${tlt.current.toFixed(2)} (${inv3.toFixed(2)}%)`);
+    log(`Index 3 raw (TLT): ${inv3.toFixed(2)}% → forecast contribution: ${(-inv3).toFixed(2)}%`);
+  } catch (e: any) {
+    log(`Action 7 ERROR: ${e.message}. Using inv3=0`);
+  }
+
+  // Action 8: Display Forecast
+  // Formula: simple average of all 6 indices, inverse ones negated
+  const todayForecast = (coeff1 + coeff2 + coeff3 + (-inv1) + (-inv2) + (-inv3)) / 6;
+  log(`Action 8: Result of Action #1: ${articleText}`);
+  log(`Action 8: Direct  → C1=${coeff1.toFixed(2)}%, C2=${coeff2.toFixed(2)}%, C3=${coeff3.toFixed(2)}%`);
+  log(`Action 8: Inverse → I1=${inv1.toFixed(2)}% (contrib ${(-inv1).toFixed(2)}%), I2=${inv2.toFixed(2)}% (contrib ${(-inv2).toFixed(2)}%), I3=${inv3.toFixed(2)}% (contrib ${(-inv3).toFixed(2)}%)`);
+  log(`Action 8: Forecast coefficient (avg of 6 indices): ${todayForecast.toFixed(2)}%`);
 
   // Save analysis entry for daily history
-  await saveAnalysisEntry(today, articleText, coeff1, coeff2, coeff3);
+  await saveAnalysisEntry(today, articleText, coeff1, coeff2, coeff3, inv1, inv2, inv3);
 
-  // Action 6: Build Table Row
+  // Action 9: Build Table Row
   let actualGoldPrice: number | null = null;
 
   try {
-    log("Action 6: Fetching actual gold price from kitco.com...");
+    log("Action 9: Fetching actual gold price from kitco.com...");
     actualGoldPrice = await fetchKitcoGoldPrice();
-    log(`Action 6: Actual gold price: $${actualGoldPrice.toFixed(2)}`);
+    log(`Action 9: Actual gold price: $${actualGoldPrice.toFixed(2)}`);
     if (yesterdayForecast !== null) {
-      log(`Action 6: Yesterday's forecast: $${yesterdayForecast.toFixed(2)}`);
+      log(`Action 9: Yesterday's forecast: $${yesterdayForecast.toFixed(2)}`);
     } else {
-      log("Action 6: No yesterday forecast (first run).");
+      log("Action 9: No yesterday forecast (first run).");
     }
 
-    // Calculate deviation inline if yesterday's forecast exists
     let deviation: number | null = null;
     if (yesterdayForecast !== null) {
       deviation = actualGoldPrice - yesterdayForecast;
@@ -261,33 +328,37 @@ async function runVercelPipeline(): Promise<void> {
       c1: parseFloat(coeff1.toFixed(2)),
       c2: parseFloat(coeff2.toFixed(2)),
       c3: parseFloat(coeff3.toFixed(2)),
+      i1: parseFloat(inv1.toFixed(2)),
+      i2: parseFloat(inv2.toFixed(2)),
+      i3: parseFloat(inv3.toFixed(2)),
     });
-    log(`Action 6: Dollar forecast for tomorrow: $${dollarForecast.toFixed(2)}`);
+    log(`Action 9: Dollar forecast for tomorrow: $${dollarForecast.toFixed(2)}`);
   } catch (e: any) {
-    log(`Action 6 ERROR: ${e.message}. Skipping table update.`);
-    // Even if gold price fails, save the percentage forecast so tomorrow
-    // doesn't lose the prediction entirely
+    log(`Action 9 ERROR: ${e.message}. Skipping table update.`);
     await saveTodayForecast(today, todayForecast, {
       article: articleText,
       c1: parseFloat(coeff1.toFixed(2)),
       c2: parseFloat(coeff2.toFixed(2)),
       c3: parseFloat(coeff3.toFixed(2)),
+      i1: parseFloat(inv1.toFixed(2)),
+      i2: parseFloat(inv2.toFixed(2)),
+      i3: parseFloat(inv3.toFixed(2)),
     });
-    log(`Action 6: Saved percentage forecast as fallback: ${todayForecast.toFixed(2)}`);
+    log(`Action 9: Saved percentage forecast as fallback: ${todayForecast.toFixed(2)}`);
   }
 
-  // Action 7: Deviation (log result)
+  // Action 10: Deviation (log result)
   try {
     if (actualGoldPrice !== null && yesterdayForecast !== null) {
       const deviation = actualGoldPrice - yesterdayForecast;
-      log(`Action 7: Deviation = $${actualGoldPrice.toFixed(2)} - $${yesterdayForecast.toFixed(2)} = ${deviation.toFixed(2)}`);
+      log(`Action 10: Deviation = $${actualGoldPrice.toFixed(2)} - $${yesterdayForecast.toFixed(2)} = ${deviation.toFixed(2)}`);
     } else if (actualGoldPrice === null) {
-      log("Action 7: Skipped — actual gold price unavailable.");
+      log("Action 10: Skipped — actual gold price unavailable.");
     } else {
-      log("Action 7: Skipped — no yesterday forecast (first run or gap).");
+      log("Action 10: Skipped — no yesterday forecast (first run or gap).");
     }
   } catch (e: any) {
-    log(`Action 7 ERROR: ${e.message}`);
+    log(`Action 10 ERROR: ${e.message}`);
   }
 
   log("=== Pipeline complete ===");
