@@ -63,20 +63,28 @@ async function appendCsvRow(
   deviation: number | null
 ): Promise<void> {
   const existing = await loadCsv();
-  const row = [
-    date,
-    actual !== null ? actual.toFixed(2) : "",
-    forecast !== null ? forecast.toFixed(2) : "",
-    deviation !== null ? deviation.toFixed(2) : "",
-  ].join(",");
-  // Prevent duplicate rows for the same date — update existing row instead
   const lines = existing.trimEnd().split("\n");
   const idx = lines.findIndex((l, i) => i > 0 && l.trim().startsWith(date + ","));
+
   if (idx >= 0) {
-    lines[idx] = row;
+    // Row exists — only overwrite a field if the new value is non-null.
+    // This prevents same-day reruns from erasing a forecast/deviation that
+    // was correctly calculated on the first run of the day.
+    const parts = lines[idx].split(",");
+    const mergedActual   = actual   !== null ? actual.toFixed(2)   : (parts[1] || "");
+    const mergedForecast = forecast !== null ? forecast.toFixed(2) : (parts[2] || "");
+    const mergedDev      = deviation !== null ? deviation.toFixed(2) : (parts[3] || "");
+    lines[idx] = [date, mergedActual, mergedForecast, mergedDev].join(",");
   } else {
+    const row = [
+      date,
+      actual   !== null ? actual.toFixed(2)   : "",
+      forecast !== null ? forecast.toFixed(2) : "",
+      deviation !== null ? deviation.toFixed(2) : "",
+    ].join(",");
     lines.push(row);
   }
+
   const updated = lines.join("\n") + "\n";
   await writeKey("gold_forecast_history.csv", updated);
   log(`CSV row saved for ${date}`);
