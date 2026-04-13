@@ -385,19 +385,24 @@
             document.getElementById('gold-price').textContent = dollar(price);
           }
 
-          const dev = fmt(latest.deviation);
+          // Find the most recent row that has a real deviation (skip same-day reruns)
+          const rowWithDev = data.rows.find(r => fmt(r.deviation) !== null);
+          const dev = rowWithDev ? fmt(rowWithDev.deviation) : null;
           if (dev !== null) {
             const devEl = document.getElementById('deviation');
             devEl.textContent = (dev >= 0 ? '+' : '-') + dollar(Math.abs(dev));
-            devEl.className = 'card-value ' + (Math.abs(dev) < 50 ? 'green' : dev >= 0 ? 'green' : 'red');
-            const pctOff = price ? ((Math.abs(dev) / price) * 100).toFixed(2) : null;
+            devEl.className = 'card-value ' + (Math.abs(dev) < 50 ? 'green' : 'red');
+            const rowPrice = fmt(rowWithDev.actual_gold_price);
+            const pctOff = rowPrice ? ((Math.abs(dev) / rowPrice) * 100).toFixed(2) : null;
+            const dateLabel = rowWithDev.date === today ? 'today' : rowWithDev.date;
             document.getElementById('deviation-hint').textContent =
-              'Yesterday we predicted ' + dollar(fmt(latest.forecast)) + '. Actual was ' + dollar(price) +
+              'On ' + dateLabel + ': predicted ' + dollar(fmt(rowWithDev.forecast)) +
+              ', actual was ' + dollar(rowPrice) +
               (pctOff ? ' (' + pctOff + '% off)' : '');
-          } else if (latest.forecast === '' || latest.forecast == null) {
-            document.getElementById('deviation').textContent = 'N/A';
+          } else {
+            document.getElementById('deviation').textContent = 'Pending';
             document.getElementById('deviation').className = 'card-value neutral';
-            document.getElementById('deviation-hint').textContent = 'First day — no prior prediction to compare against';
+            document.getElementById('deviation-hint').textContent = 'Will show accuracy after the second day\'s run compares against today\'s forecast';
           }
         }
 
@@ -523,12 +528,12 @@
           rows += '<tr' + (isToday ? ' class="today-row"' : '') + ' style="cursor:pointer" onclick="toggleAnalysis(this)">';
           rows += '<td>' + esc(row.date || '') + (isToday ? ' <span style="color:#f0b429;font-size:0.7rem">TODAY</span>' : '') + '</td>';
           rows += '<td>' + (price !== null ? dollar(price) : '<span class="empty">--</span>') + '</td>';
-          rows += '<td>' + (forecast !== null ? dollar(forecast) : '<span class="empty">first day</span>') + '</td>';
+          rows += '<td>' + (forecast !== null ? dollar(forecast) : '<span class="empty" title="No prior forecast — prediction will appear the next day">--</span>') + '</td>';
           if (devVal !== null) {
             const pctOff = price ? ((Math.abs(devVal) / price) * 100).toFixed(2) + '%' : '';
             rows += '<td class="' + devClass + '">' + (devVal >= 0 ? '+' : '-') + dollar(Math.abs(devVal)) + ' <span style="font-size:0.75rem;color:#6e7681">(' + pctOff + ')</span></td>';
           } else {
-            rows += '<td><span class="empty">' + (forecast === null || forecast === '' ? 'first day' : '--') + '</span></td>';
+            rows += '<td><span class="empty" title="Deviation shown once next day\'s actual price is recorded">--</span></td>';
           }
           rows += '<td>' + signalHtml + '</td>';
           rows += '</tr>';
