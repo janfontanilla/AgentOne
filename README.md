@@ -31,13 +31,14 @@ architecture AI system for predictive financial modeling.
 6. [Dashboard Features](#dashboard-features)
 7. [Data Sources & APIs](#data-sources--apis)
 8. [Formulas & Calculations](#formulas--calculations)
-9. [Output Format](#output-format)
-10. [Error Handling](#error-handling)
-11. [Deployment](#deployment)
-12. [Testing](#testing)
-13. [Project Structure](#project-structure)
-14. [Tech Stack](#tech-stack)
-15. [Configuration](#configuration)
+9. [Self-Learning / Adaptive Weighting](#self-learning--adaptive-weighting)
+10. [Output Format](#output-format)
+11. [Error Handling](#error-handling)
+12. [Deployment](#deployment)
+13. [Testing](#testing)
+14. [Project Structure](#project-structure)
+15. [Tech Stack](#tech-stack)
+16. [Configuration](#configuration)
 
 ---
 
@@ -284,6 +285,48 @@ deviation = actual_gold_price - yesterday_dollar_forecast
 If 24-hour data is not available at the exact time (weekends, holidays, pre-market):
 - Use the **previous close** as the closest available market price
 - The 5-day Yahoo Finance range ensures sufficient historical data
+
+---
+
+## Self-Learning / Adaptive Weighting
+
+The agent self-learns which indicators have been most predictive lately and weights tomorrow's forecast accordingly. This implements the upgrade spec's "Adaptive Weighting via Historical Accuracy" mechanism.
+
+### How it works
+
+Each day, after fetching today's actual gold price change (close-to-close on `GC=F`), the agent scores **yesterday's** six indicator predictions:
+
+- **Direct group** — `D1` Mining stocks, `D2` AUD/USD, `D3` Silver
+- **Reversal group** — `R1` US Equities, `R2` Dollar Index, `R3` Bond Yields (values negated to express gold direction)
+
+Within each group of three, the indicator closest to the actual change earns **+10**, the runner-up **+5**, the worst **0**. Ties split the points evenly. Bonuses accumulate over a rolling **10-day window**. Tomorrow's forecast then weights each indicator by:
+
+```
+weight_i = 100 + cumulative_bonus_i
+```
+
+so an indicator that has been consistently right gets up to ~30% more pull than its peers.
+
+### Where state lives
+
+Both keys are stored in Upstash Redis (production) and reset to empty on first run:
+
+| Redis key | Contents |
+|-----------|----------|
+| `adaptive_state.json` | Rolling 10-day FIFO window of `{date, actualChangePct, preds, errors, bonuses}` |
+| `gold_forecast_accuracy.csv` | Audit log: one row per day, columns per upgrade spec §3.5 (`pred_direct_*`, `pred_reversal_*_converted`, `err_*`, `bonus_*`, `cum_*`) |
+
+If the audit CSV's header drifts from the spec (e.g. after a column-rename rollout), the file is automatically archived to `gold_forecast_accuracy_legacy.csv` and a fresh file is started.
+
+### How to inspect
+
+- **Dashboard** — the Net Signal panel now uses adaptive weights when ≥1 day of history exists, and shows a per-indicator weights breakdown beneath the signal pills.
+- **API** — `GET /api/history` returns an `adaptive` object alongside the rows: `{ cumBonuses, weights, historyDays }`.
+- **Audit CSV** — pull `gold_forecast_accuracy.csv` from Redis for the full per-day score trail.
+
+### Daily run
+
+The same Vercel cron (`0 14 * * *`, 10:00 AM Toronto) runs both halves: it scores yesterday's predictions against today's actual price first, *then* generates today's new forecast using the freshly updated weights. No second cron is needed.
 
 ---
 

@@ -345,13 +345,26 @@
       return -parseFloat(raw) >= 0 ? 'green' : 'red';
     }
 
-    // Net signal using all 6 indices
-    function calcNetSignal(row) {
+    // Net signal using all 6 indices. If `weights` is provided (per-indicator
+    // weights from the adaptive weighting state, keyed d1/d2/d3/r1/r2/r3),
+    // the signal is the weighted average per upgrade spec §3.5; otherwise
+    // falls back to the equal-weight /6 (or /3 for historical rows missing
+    // the inverse trio).
+    function calcNetSignal(row, weights) {
       const c1 = fmt(row.c1), c2 = fmt(row.c2), c3 = fmt(row.c3);
       const i1 = fmt(row.i1), i2 = fmt(row.i2), i3 = fmt(row.i3);
       const hasAll = [c1, c2, c3].every(v => v !== null);
       if (!hasAll) return null;
       const hasInverse = [i1, i2, i3].every(v => v !== null);
+      if (hasInverse && weights) {
+        const preds = { d1: c1, d2: c2, d3: c3, r1: -i1, r2: -i2, r3: -i3 };
+        let weighted = 0, total = 0;
+        for (const k of ['d1','d2','d3','r1','r2','r3']) {
+          weighted += preds[k] * weights[k];
+          total += weights[k];
+        }
+        return total > 0 ? weighted / total : null;
+      }
       if (hasInverse) {
         return (c1 + c2 + c3 + (-i1) + (-i2) + (-i3)) / 6;
       }
@@ -445,13 +458,29 @@
           const hasDirect = lf.c1 != null && lf.c2 != null && lf.c3 != null;
 
           if (hasDirect) {
-            const netSignal = hasInverse
-              ? ((lf.c1 + lf.c2 + lf.c3 + (-lf.i1) + (-lf.i2) + (-lf.i3)) / 6)
-              : ((lf.c1 + lf.c2 + lf.c3) / 3);
+            const adaptive = data.adaptive || null;
+            const useAdaptive = hasInverse && adaptive && adaptive.weights;
+            let netSignal;
+            if (useAdaptive) {
+              const preds = { d1: lf.c1, d2: lf.c2, d3: lf.c3, r1: -lf.i1, r2: -lf.i2, r3: -lf.i3 };
+              let weighted = 0, total = 0;
+              for (const k of ['d1','d2','d3','r1','r2','r3']) {
+                weighted += preds[k] * adaptive.weights[k];
+                total += adaptive.weights[k];
+              }
+              netSignal = total > 0 ? weighted / total : 0;
+            } else if (hasInverse) {
+              netSignal = (lf.c1 + lf.c2 + lf.c3 + (-lf.i1) + (-lf.i2) + (-lf.i3)) / 6;
+            } else {
+              netSignal = (lf.c1 + lf.c2 + lf.c3) / 3;
+            }
             const dir = netSignal >= 0 ? 'upward' : 'downward';
             const netCls = netSignal >= 0 ? 'green' : 'red';
             html += '<div class="forecast-line">Net signal: <span class="' + netCls + '">' + (netSignal >= 0 ? '+' : '') + netSignal.toFixed(2) + '%</span> ' + dir + ' pressure</div>';
-            html += '<div class="forecast-explain">Average of ' + (hasInverse ? '6 indices (3 direct + 3 inverse)' : '3 direct indices') + '. Positive = gold predicted to rise tomorrow.</div>';
+            const explain = useAdaptive
+              ? 'Adaptive-weighted average of 6 indices (weights below, learned from the last ' + adaptive.historyDays + ' days). Positive = gold predicted to rise tomorrow.'
+              : 'Average of ' + (hasInverse ? '6 indices (3 direct + 3 inverse)' : '3 direct indices') + '. Positive = gold predicted to rise tomorrow.';
+            html += '<div class="forecast-explain">' + explain + '</div>';
 
             html += '<div class="signal-groups">';
 
@@ -478,6 +507,24 @@
             html += '</div></div>';
 
             html += '</div>'; // .signal-groups
+
+            if (useAdaptive) {
+              const labels = {
+                d1: 'Mining (D1)', d2: 'AUDUSD (D2)', d3: 'Silver (D3)',
+                r1: 'Equities (R1)', r2: 'DXY (R2)', r3: 'TLT (R3)',
+              };
+              html += '<div style="margin-top:0.8rem;padding:0.6rem 0.7rem;background:#0d1117;border:1px solid #21262d;border-radius:6px;">';
+              html += '<div style="font-size:0.7rem;color:#8b949e;margin-bottom:0.4rem;">Adaptive weights &mdash; learned over the last ' + adaptive.historyDays + ' days. Each indicator earns +10/+5/0 per day for being closest to the actual gold change. Weight = 100 + cumulative bonus.</div>';
+              html += '<div style="display:flex;flex-wrap:wrap;gap:0.4rem 1rem;font-size:0.75rem;">';
+              for (const k of ['d1','d2','d3','r1','r2','r3']) {
+                const w = adaptive.weights[k];
+                const bonus = adaptive.cumBonuses[k];
+                const sign = bonus > 0 ? '+' : '';
+                const cls = bonus > 0 ? 'green' : (bonus < 0 ? 'red' : 'neutral');
+                html += '<div><span style="color:#8b949e;">' + labels[k] + ':</span> <strong>' + w.toFixed(0) + '</strong> <span class="' + cls + '" style="font-size:0.7rem;">(' + sign + bonus + ')</span></div>';
+              }
+              html += '</div></div>';
+            }
           }
 
           if (html) document.getElementById('analysis-box').innerHTML = html;
