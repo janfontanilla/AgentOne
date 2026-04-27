@@ -65,12 +65,12 @@ const ACCURACY_CSV_COLUMNS =
   "date,actual_change_pct," +
   "pred_direct_1,pred_direct_2,pred_direct_3," +
   "pred_reversal_1_converted,pred_reversal_2_converted,pred_reversal_3_converted," +
-  "err_direct_1,err_direct_2,err_direct_3," +
-  "err_reversal_1_converted,err_reversal_2_converted,err_reversal_3_converted," +
+  "error_direct_1,error_direct_2,error_direct_3," +
+  "error_reversal_1_converted,error_reversal_2_converted,error_reversal_3_converted," +
   "bonus_direct_1,bonus_direct_2,bonus_direct_3," +
   "bonus_reversal_1_converted,bonus_reversal_2_converted,bonus_reversal_3_converted," +
-  "cum_direct_1,cum_direct_2,cum_direct_3," +
-  "cum_reversal_1_converted,cum_reversal_2_converted,cum_reversal_3_converted";
+  "cumulative_bonus_direct_1,cumulative_bonus_direct_2,cumulative_bonus_direct_3," +
+  "cumulative_bonus_reversal_1_converted,cumulative_bonus_reversal_2_converted,cumulative_bonus_reversal_3_converted";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
