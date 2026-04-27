@@ -29,3 +29,6 @@ graphify-out/
 
 # Claude Code config (per-machine, may contain secrets in cached commands)
 .claude/
+
+# Reference materials (PDFs, docx, screenshots from supervisor / meetings)
+docs/
