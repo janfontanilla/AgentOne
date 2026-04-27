@@ -1,0 +1,360 @@
+/**
+ * Adaptive Weighting Self-Learning Module
+ *
+ * Implements the supervisor's "Adaptive Weighting via Historical Accuracy"
+ * upgrade. Each indicator earns daily bonus points (10/5/0) based on
+ * prediction accuracy ranked within its group (3 direct, 3 reversal). A
+ * rolling 10-day cumulative bonus (0-100) reweights tomorrow's forecast as
+ * `weight_i = 100 + cumulative_bonus_i`.
+ *
+ * Reversal predictions (r1/r2/r3) are stored already-negated so there is
+ * one source of truth and no sign-drift bugs.
+ *
+ * See ADAPTIVE_WEIGHTING_PLAN.md for full design.
+ */
+
+import { log, torontoDateStr } from "../gold_forecast_agent.js";
+
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+export type IndicatorKey = "d1" | "d2" | "d3" | "r1" | "r2" | "r3";
+export type IndicatorMap = Record<IndicatorKey, number>;
+
+export interface AdaptiveEntry {
+  date: string;             // YYYY-MM-DD (Toronto), the day predictions were MADE
+  actualChangePct: number;  // measured the next day
+  preds: IndicatorMap;      // r1/r2/r3 already negated
+  errors: IndicatorMap;     // |pred - actual|
+  bonuses: IndicatorMap;    // 10 / 5 / 0 (or fractional on ties)
+}
+
+export interface AdaptiveState {
+  history: AdaptiveEntry[]; // chronological, max 10 entries (FIFO)
+}
+
+export interface YesterdayBlob {
+  date: string;
+  forecast: number;
+  article?: string;
+  c1?: number; c2?: number; c3?: number;
+  i1?: number; i2?: number; i3?: number;
+  actual_gold_price?: number;
+}
+
+interface RedisLike {
+  get(key: string): Promise<unknown>;
+  set(key: string, value: string): Promise<unknown>;
+}
+
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const ADAPTIVE_STATE_KEY = "adaptive_state.json";
+const ACCURACY_CSV_KEY = "gold_forecast_accuracy.csv";
+const LAST_FORECAST_KEY = "last_forecast.json";
+const MAX_HISTORY = 10;
+const ZERO_INFO_EPSILON = 0.01; // 0.01% — smaller than meaningful market movement
+const DIRECT_GROUP: IndicatorKey[] = ["d1", "d2", "d3"];
+const REVERSAL_GROUP: IndicatorKey[] = ["r1", "r2", "r3"];
+const ALL_KEYS: IndicatorKey[] = ["d1", "d2", "d3", "r1", "r2", "r3"];
+
+const ACCURACY_CSV_COLUMNS =
+  "date,actual_change_pct," +
+  "pred_d1,pred_d2,pred_d3,pred_r1,pred_r2,pred_r3," +
+  "err_d1,err_d2,err_d3,err_r1,err_r2,err_r3," +
+  "bonus_d1,bonus_d2,bonus_d3,bonus_r1,bonus_r2,bonus_r3," +
+  "cum_d1,cum_d2,cum_d3,cum_r1,cum_r2,cum_r3";
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function emptyMap(): IndicatorMap {
+  return { d1: 0, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };
+}
+
+async function readKeyRaw(redis: RedisLike, key: string): Promise<string | null> {
+  try {
+    const value = await redis.get(key);
+    if (value === null || value === undefined) return null;
+    return typeof value === "string" ? value : JSON.stringify(value);
+  } catch (e: any) {
+    log(`Adaptive: Redis read failed for ${key}: ${e.message}`);
+    return null;
+  }
+}
+
+async function writeKeyRaw(redis: RedisLike, key: string, value: string): Promise<void> {
+  await redis.set(key, value);
+}
+
+// ─── State I/O ─────────────────────────────────────────────────────────────
+
+export async function loadAdaptiveState(redis: RedisLike): Promise<AdaptiveState> {
+  const raw = await readKeyRaw(redis, ADAPTIVE_STATE_KEY);
+  if (!raw) return { history: [] };
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.history)) return { history: [] };
+    return { history: parsed.history };
+  } catch (e: any) {
+    log(`Adaptive: failed to parse adaptive_state.json (${e.message}) — starting fresh`);
+    return { history: [] };
+  }
+}
+
+export async function saveAdaptiveState(redis: RedisLike, state: AdaptiveState): Promise<void> {
+  const trimmed: AdaptiveState = {
+    history: state.history.slice(-MAX_HISTORY),
+  };
+  await writeKeyRaw(redis, ADAPTIVE_STATE_KEY, JSON.stringify(trimmed));
+}
+
+export async function loadYesterdayBlob(redis: RedisLike): Promise<YesterdayBlob | null> {
+  const raw = await readKeyRaw(redis, LAST_FORECAST_KEY);
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw) as YesterdayBlob;
+    if (data.date === torontoDateStr()) {
+      log("Adaptive: last_forecast.json is from today (same-day rerun) — no yesterday data");
+      return null;
+    }
+    return data;
+  } catch (e: any) {
+    log(`Adaptive: failed to parse last_forecast.json: ${e.message}`);
+    return null;
+  }
+}
+
+// ─── Ranking & Bonuses ─────────────────────────────────────────────────────
+
+export function rankAndAssignBonuses(
+  group: IndicatorKey[],
+  errors: IndicatorMap
+): Record<string, number> {
+  const sorted = [...group].sort((a, b) => errors[a] - errors[b]);
+  const points = [10, 5, 0];
+  const bonuses: Record<string, number> = {};
+  let i = 0;
+  while (i < sorted.length) {
+    let j = i;
+    while (j < sorted.length && errors[sorted[j]] === errors[sorted[i]]) j++;
+    const tiedPoints = points.slice(i, j);
+    const avg = tiedPoints.reduce((a, b) => a + b, 0) / tiedPoints.length;
+    for (let k = i; k < j; k++) bonuses[sorted[k]] = avg;
+    i = j;
+  }
+  return bonuses;
+}
+
+export function isZeroInformationDay(actualChangePct: number, preds: IndicatorMap): boolean {
+  if (Math.abs(actualChangePct) > ZERO_INFO_EPSILON) return false;
+  return (Object.values(preds) as number[]).every((p) => Math.abs(p) < ZERO_INFO_EPSILON);
+}
+
+export function computeCumulativeBonuses(state: AdaptiveState): IndicatorMap {
+  const cum = emptyMap();
+  for (const entry of state.history) {
+    for (const k of ALL_KEYS) {
+      cum[k] += entry.bonuses[k] ?? 0;
+    }
+  }
+  return cum;
+}
+
+export function computeAdaptiveForecast(
+  preds: IndicatorMap,
+  cumBonuses: IndicatorMap
+): number {
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const k of ALL_KEYS) {
+    const weight = 100 + cumBonuses[k];
+    weightedSum += preds[k] * weight;
+    totalWeight += weight;
+  }
+  if (totalWeight === 0) return 0;
+  return weightedSum / totalWeight;
+}
+
+// ─── Daily Update ──────────────────────────────────────────────────────────
+
+function emitDailySummary(
+  date: string,
+  actualChangePct: number,
+  errors: IndicatorMap,
+  bonuses: IndicatorMap,
+  cumBonuses: IndicatorMap
+): void {
+  const labels: Record<IndicatorKey, string> = {
+    d1: "Mining(C1)",
+    d2: "AUDUSD(C2)",
+    d3: "Silver(C3)",
+    r1: "Equities(R1)",
+    r2: "DXY(R2)",
+    r3: "TLT(R3)",
+  };
+  const fmt = (k: IndicatorKey): string =>
+    `${labels[k]} (error ${errors[k].toFixed(2)}%, bonus +${bonuses[k]})`;
+
+  const directRanked = [...DIRECT_GROUP].sort((a, b) => errors[a] - errors[b]);
+  const reversalRanked = [...REVERSAL_GROUP].sort((a, b) => errors[a] - errors[b]);
+
+  log(`Adaptive: Date: ${date}`);
+  log(`Adaptive: Actual gold change: ${actualChangePct >= 0 ? "+" : ""}${actualChangePct.toFixed(2)}%`);
+  log(
+    `Adaptive: Direct group: Winner=${fmt(directRanked[0])}, Middle=${fmt(directRanked[1])}, Loser=${fmt(directRanked[2])}`
+  );
+  log(
+    `Adaptive: Reversal group: Winner=${fmt(reversalRanked[0])}, Middle=${fmt(reversalRanked[1])}, Loser=${fmt(reversalRanked[2])}`
+  );
+  log(
+    `Adaptive: Cumulative bonuses after today: ` +
+      `D1=${cumBonuses.d1}% D2=${cumBonuses.d2}% D3=${cumBonuses.d3}%; ` +
+      `R1=${cumBonuses.r1}% R2=${cumBonuses.r2}% R3=${cumBonuses.r3}%`
+  );
+}
+
+/**
+ * Score yesterday's predictions against today's actual price, append the
+ * resulting bonuses to adaptive_state.json, and write an audit row to
+ * gold_forecast_accuracy.csv. Idempotent: skips if entry for yesterday's
+ * date already exists in history.
+ */
+export async function updateDailyBonuses(
+  redis: RedisLike,
+  today: string,
+  todayActualPrice: number,
+  yesterdayBlob: YesterdayBlob | null
+): Promise<void> {
+  if (!yesterdayBlob) {
+    log("Adaptive: no yesterday data — skipping bonus update");
+    return;
+  }
+
+  const yesterdayActual = yesterdayBlob.actual_gold_price;
+  if (
+    typeof yesterdayActual !== "number" ||
+    !isFinite(yesterdayActual) ||
+    yesterdayActual <= 0
+  ) {
+    log(
+      `Adaptive: yesterday actual_gold_price missing/invalid (${yesterdayActual}) — skipping`
+    );
+    return;
+  }
+  if (
+    typeof todayActualPrice !== "number" ||
+    !isFinite(todayActualPrice) ||
+    todayActualPrice <= 0
+  ) {
+    log(`Adaptive: today actual_gold_price invalid — skipping`);
+    return;
+  }
+  for (const k of ["c1", "c2", "c3", "i1", "i2", "i3"] as const) {
+    const v = yesterdayBlob[k];
+    if (typeof v !== "number" || !isFinite(v)) {
+      log(`Adaptive: yesterday ${k} missing/invalid — skipping`);
+      return;
+    }
+  }
+
+  const state = await loadAdaptiveState(redis);
+  if (state.history.some((e) => e.date === yesterdayBlob.date)) {
+    log(
+      `Adaptive: bonuses for ${yesterdayBlob.date} already recorded — skipping duplicate`
+    );
+    return;
+  }
+
+  // Reversal preds are stored already-negated for single source of truth
+  const preds: IndicatorMap = {
+    d1: yesterdayBlob.c1 as number,
+    d2: yesterdayBlob.c2 as number,
+    d3: yesterdayBlob.c3 as number,
+    r1: -(yesterdayBlob.i1 as number),
+    r2: -(yesterdayBlob.i2 as number),
+    r3: -(yesterdayBlob.i3 as number),
+  };
+
+  const actualChangePct =
+    ((todayActualPrice - yesterdayActual) / yesterdayActual) * 100;
+
+  if (isZeroInformationDay(actualChangePct, preds)) {
+    log(
+      `Adaptive: zero-information day (actual ${actualChangePct.toFixed(4)}%, all preds ~0) — skipping bonus update`
+    );
+    return;
+  }
+
+  const errors: IndicatorMap = emptyMap();
+  for (const k of ALL_KEYS) {
+    errors[k] = Math.abs(preds[k] - actualChangePct);
+  }
+
+  const directBonuses = rankAndAssignBonuses(DIRECT_GROUP, errors);
+  const reversalBonuses = rankAndAssignBonuses(REVERSAL_GROUP, errors);
+  const bonuses: IndicatorMap = {
+    d1: directBonuses.d1,
+    d2: directBonuses.d2,
+    d3: directBonuses.d3,
+    r1: reversalBonuses.r1,
+    r2: reversalBonuses.r2,
+    r3: reversalBonuses.r3,
+  };
+
+  const entry: AdaptiveEntry = {
+    date: yesterdayBlob.date,
+    actualChangePct,
+    preds,
+    errors,
+    bonuses,
+  };
+
+  state.history.push(entry);
+  // Trim FIFO before save (also handled in saveAdaptiveState as defense in depth)
+  if (state.history.length > MAX_HISTORY) {
+    state.history = state.history.slice(-MAX_HISTORY);
+  }
+  await saveAdaptiveState(redis, state);
+
+  const cumBonuses = computeCumulativeBonuses(state);
+  emitDailySummary(yesterdayBlob.date, actualChangePct, errors, bonuses, cumBonuses);
+
+  try {
+    await appendAccuracyCsvRow(redis, entry, cumBonuses);
+  } catch (e: any) {
+    log(`Adaptive: WARNING — failed to append accuracy CSV row: ${e.message}`);
+  }
+}
+
+// ─── Accuracy CSV Audit Log ────────────────────────────────────────────────
+
+export async function appendAccuracyCsvRow(
+  redis: RedisLike,
+  entry: AdaptiveEntry,
+  cumBonuses: IndicatorMap
+): Promise<void> {
+  const existing = await readKeyRaw(redis, ACCURACY_CSV_KEY);
+  const lines = existing && existing.trim().length > 0
+    ? existing.trimEnd().split("\n")
+    : [ACCURACY_CSV_COLUMNS];
+
+  const row = [
+    entry.date,
+    entry.actualChangePct.toFixed(4),
+    ...ALL_KEYS.map((k) => entry.preds[k].toFixed(4)),
+    ...ALL_KEYS.map((k) => entry.errors[k].toFixed(4)),
+    ...ALL_KEYS.map((k) => entry.bonuses[k].toString()),
+    ...ALL_KEYS.map((k) => cumBonuses[k].toString()),
+  ].join(",");
+
+  // Idempotency: replace existing row for this date if present
+  const idx = lines.findIndex(
+    (l, i) => i > 0 && l.trim().startsWith(entry.date + ",")
+  );
+  if (idx >= 0) {
+    lines[idx] = row;
+  } else {
+    lines.push(row);
+  }
+
+  await writeKeyRaw(redis, ACCURACY_CSV_KEY, lines.join("\n") + "\n");
+}

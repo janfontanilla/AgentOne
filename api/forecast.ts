@@ -19,7 +19,16 @@ import {
   fetchYahooQuote,
   fetchKitcoGoldPrice,
   action1_newsArticle,
-} from "../gold_forecast_agent.js";
+} from "./gold_forecast_agent.js";
+import {
+  loadAdaptiveState,
+  loadYesterdayBlob,
+  updateDailyBonuses,
+  computeCumulativeBonuses,
+  computeAdaptiveForecast,
+  type IndicatorMap,
+  type YesterdayBlob,
+} from "./adaptive.js";
 
 const CSV_COLUMNS = "date,actual_gold_price,forecast,deviation";
 const MAX_ANALYSIS_HISTORY = 365;
@@ -97,6 +106,7 @@ async function saveTodayForecast(
     article?: string;
     c1?: number; c2?: number; c3?: number;
     i1?: number; i2?: number; i3?: number;
+    actual_gold_price?: number;
   }
 ): Promise<void> {
   await writeKey(
@@ -182,6 +192,47 @@ async function runVercelPipeline(): Promise<void> {
     }
   } catch (e: any) {
     log(`WARNING: Failed to load yesterday forecast: ${e.message}`);
+  }
+
+  // Load full yesterday blob for adaptive scoring (separate from yesterdayForecast
+  // to keep same-day-rerun semantics). Also fetched up front because the
+  // adaptive block needs today's actual price.
+  let yesterdayBlob: YesterdayBlob | null = null;
+  try {
+    yesterdayBlob = await loadYesterdayBlob(redis);
+  } catch (e: any) {
+    log(`WARNING: Failed to load yesterday blob: ${e.message}`);
+  }
+
+  // Fetch today's actual gold price up front so the adaptive block can score
+  // yesterday's predictions. Action 9 reuses this value (no double fetch).
+  let actualGoldPrice: number | null = null;
+  try {
+    log("Fetching actual gold price from kitco.com...");
+    actualGoldPrice = await fetchKitcoGoldPrice();
+    log(`Actual gold price: $${actualGoldPrice.toFixed(2)}`);
+  } catch (e: any) {
+    log(`WARNING: Failed to fetch actual gold price: ${e.message}`);
+  }
+
+  // Adaptive weighting: score yesterday's predictions, compute cumulative bonuses
+  // for today's forecast. Wrapped so any failure here falls back to equal weights
+  // and never halts the rest of the pipeline.
+  let cumBonuses: IndicatorMap = { d1: 0, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };
+  try {
+    if (actualGoldPrice !== null) {
+      log("Adaptive: updating daily bonuses from yesterday's predictions...");
+      await updateDailyBonuses(redis, today, actualGoldPrice, yesterdayBlob);
+    } else {
+      log("Adaptive: skipping bonus update (no actual gold price).");
+    }
+    const state = await loadAdaptiveState(redis);
+    cumBonuses = computeCumulativeBonuses(state);
+    log(
+      `Adaptive: cum bonuses → D1=${cumBonuses.d1} D2=${cumBonuses.d2} D3=${cumBonuses.d3} | R1=${cumBonuses.r1} R2=${cumBonuses.r2} R3=${cumBonuses.r3}`
+    );
+  } catch (e: any) {
+    log(`Adaptive ERROR: ${e.message}. Falling back to equal weights.`);
   }
 
   // Action 1: News Article
@@ -299,23 +350,28 @@ async function runVercelPipeline(): Promise<void> {
   }
 
   // Action 8: Display Forecast
-  // Formula: simple average of all 6 indices, inverse ones negated
-  const todayForecast = (coeff1 + coeff2 + coeff3 + (-inv1) + (-inv2) + (-inv3)) / 6;
+  // Formula: weighted average of all 6 indicators using adaptive weights.
+  // weight_i = 100 + cumulative_bonus_i. With empty history (all bonuses 0),
+  // this is mathematically equivalent to the prior equal-weight /6 formula.
+  const adaptivePreds: IndicatorMap = {
+    d1: coeff1, d2: coeff2, d3: coeff3,
+    r1: -inv1, r2: -inv2, r3: -inv3,
+  };
+  const todayForecast = computeAdaptiveForecast(adaptivePreds, cumBonuses);
   log(`Action 8: Result of Action #1: ${articleText}`);
   log(`Action 8: Direct  → C1=${coeff1.toFixed(2)}%, C2=${coeff2.toFixed(2)}%, C3=${coeff3.toFixed(2)}%`);
   log(`Action 8: Inverse → I1=${inv1.toFixed(2)}% (contrib ${(-inv1).toFixed(2)}%), I2=${inv2.toFixed(2)}% (contrib ${(-inv2).toFixed(2)}%), I3=${inv3.toFixed(2)}% (contrib ${(-inv3).toFixed(2)}%)`);
-  log(`Action 8: Forecast coefficient (avg of 6 indices): ${todayForecast.toFixed(2)}%`);
+  log(`Action 8: Weights → D1=${100+cumBonuses.d1} D2=${100+cumBonuses.d2} D3=${100+cumBonuses.d3} | R1=${100+cumBonuses.r1} R2=${100+cumBonuses.r2} R3=${100+cumBonuses.r3}`);
+  log(`Action 8: Forecast coefficient (adaptive weighted avg): ${todayForecast.toFixed(2)}%`);
 
   // Save analysis entry for daily history
   await saveAnalysisEntry(today, articleText, coeff1, coeff2, coeff3, inv1, inv2, inv3);
 
-  // Action 9: Build Table Row
-  let actualGoldPrice: number | null = null;
-
+  // Action 9: Build Table Row (reuses actualGoldPrice fetched up front)
   try {
-    log("Action 9: Fetching actual gold price from kitco.com...");
-    actualGoldPrice = await fetchKitcoGoldPrice();
-    log(`Action 9: Actual gold price: $${actualGoldPrice.toFixed(2)}`);
+    if (actualGoldPrice === null) {
+      throw new Error("actual gold price unavailable from earlier fetch");
+    }
     if (yesterdayForecast !== null) {
       log(`Action 9: Yesterday's forecast: $${yesterdayForecast.toFixed(2)}`);
     } else {
@@ -339,6 +395,7 @@ async function runVercelPipeline(): Promise<void> {
       i1: parseFloat(inv1.toFixed(2)),
       i2: parseFloat(inv2.toFixed(2)),
       i3: parseFloat(inv3.toFixed(2)),
+      actual_gold_price: parseFloat(actualGoldPrice.toFixed(2)),
     });
     log(`Action 9: Dollar forecast for tomorrow: $${dollarForecast.toFixed(2)}`);
   } catch (e: any) {
@@ -351,6 +408,9 @@ async function runVercelPipeline(): Promise<void> {
       i1: parseFloat(inv1.toFixed(2)),
       i2: parseFloat(inv2.toFixed(2)),
       i3: parseFloat(inv3.toFixed(2)),
+      ...(actualGoldPrice !== null
+        ? { actual_gold_price: parseFloat(actualGoldPrice.toFixed(2)) }
+        : {}),
     });
     log(`Action 9: Saved percentage forecast as fallback: ${todayForecast.toFixed(2)}`);
   }
