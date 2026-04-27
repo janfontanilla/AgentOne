@@ -123,3 +123,22 @@ All 7 actions implemented and verified against Gold Forecast Daily AI Agent V1 P
 - docker-compose.yml includes commented placeholders for AI Michel (ChromaDB, Ollama, 3 agents)
 - Updated .gitignore for Node/Docker (removed Python entries)
 - Docker Desktop not yet installed — build untested, files ready
+
+### 2026-04-27 — Stage 3 Verification & Repo Cleanup
+Comprehensive audit ahead of supervisor server-hosting meeting.
+
+Verified working (no code changes needed):
+- All 7 PDF-spec actions present in api/forecast.ts, extended cleanly to 10 actions for the adaptive weighting layer
+- api/adaptive.ts computes per-indicator bonuses, weights, and cumulative scores; dashboard renders them
+- CSV columns match spec exactly: date,actual_gold_price,forecast,deviation
+- Coefficient defaults (0.0 on fetch failure), kitco-skip behaviour, first-run handling, Toronto timezone, 20-URL scraping cap — all confirmed against .claude/rules/*.md
+- Deployed via Vercel cron (0 14 * * * UTC = 10:00 AM Toronto), persisted in Upstash Redis
+- Test suite: 82/82 passing after refreshing three stale assertions left from the Vercel Blob → Upstash Redis migration
+
+Repo hygiene fixes:
+- .env.example: documented UPSTASH_REDIS_REST_URL/TOKEN and CRON_SECRET (previously only GROQ_API_KEY listed)
+- .gitignore: added graphify-out/, .graphify_*, .tmp_*.py, *.local_backup, .claude/
+- Renamed adaptive CSV columns: err_* → error_*, cum_* → cumulative_bonus_* (commit message on 4ed5c0f had claimed this was done; finally staged)
+- Moved project docs (CLAUDE.md, PLANNING.md, CONVENTIONS.md, PROGRESS.md, etc.) into the deployed repo so it's a single source of truth
+- Workspace cleanup: deleted stale duplicate root checkout, .tmp_*.py scratch scripts, graphify-out/, content.txt/.json exports, README backup
+- Stage 3 declared complete and ready to discuss next-stage hosting (Vercel today; AWS migration planned once full multi-agent architecture lands)
