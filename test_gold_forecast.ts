@@ -18,7 +18,6 @@ import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Re-declare pure helper functions from gold_forecast_agent.ts for unit testing
@@ -527,12 +526,12 @@ describe("Vercel deployment validation", () => {
 
 describe("Security audit", () => {
   it(".gitignore excludes .env", () => {
-    const content = fs.readFileSync(path.join(PROJECT_ROOT, ".gitignore"), "utf-8");
+    const content = fs.readFileSync(path.join(SCRIPT_DIR, ".gitignore"), "utf-8");
     assert.ok(content.includes(".env"));
   });
 
   it(".gitignore excludes node_modules", () => {
-    const content = fs.readFileSync(path.join(PROJECT_ROOT, ".gitignore"), "utf-8");
+    const content = fs.readFileSync(path.join(SCRIPT_DIR, ".gitignore"), "utf-8");
     assert.ok(content.includes("node_modules"));
   });
 
