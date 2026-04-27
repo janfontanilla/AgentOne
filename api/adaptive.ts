@@ -50,6 +50,7 @@ interface RedisLike {
 
 const ADAPTIVE_STATE_KEY = "adaptive_state.json";
 const ACCURACY_CSV_KEY = "gold_forecast_accuracy.csv";
+const ACCURACY_CSV_LEGACY_KEY = "gold_forecast_accuracy_legacy.csv";
 const LAST_FORECAST_KEY = "last_forecast.json";
 const MAX_HISTORY = 10;
 const ZERO_INFO_EPSILON = 0.01; // 0.01% — smaller than meaningful market movement
@@ -57,12 +58,19 @@ const DIRECT_GROUP: IndicatorKey[] = ["d1", "d2", "d3"];
 const REVERSAL_GROUP: IndicatorKey[] = ["r1", "r2", "r3"];
 const ALL_KEYS: IndicatorKey[] = ["d1", "d2", "d3", "r1", "r2", "r3"];
 
+// Column names match upgrade spec §3.5 literally.
+// `_converted` on reversal columns flags that the stored value is the negated
+// (gold-direction) form, not the raw inverse-asset value.
 const ACCURACY_CSV_COLUMNS =
   "date,actual_change_pct," +
-  "pred_d1,pred_d2,pred_d3,pred_r1,pred_r2,pred_r3," +
-  "err_d1,err_d2,err_d3,err_r1,err_r2,err_r3," +
-  "bonus_d1,bonus_d2,bonus_d3,bonus_r1,bonus_r2,bonus_r3," +
-  "cum_d1,cum_d2,cum_d3,cum_r1,cum_r2,cum_r3";
+  "pred_direct_1,pred_direct_2,pred_direct_3," +
+  "pred_reversal_1_converted,pred_reversal_2_converted,pred_reversal_3_converted," +
+  "err_direct_1,err_direct_2,err_direct_3," +
+  "err_reversal_1_converted,err_reversal_2_converted,err_reversal_3_converted," +
+  "bonus_direct_1,bonus_direct_2,bonus_direct_3," +
+  "bonus_reversal_1_converted,bonus_reversal_2_converted,bonus_reversal_3_converted," +
+  "cum_direct_1,cum_direct_2,cum_direct_3," +
+  "cum_reversal_1_converted,cum_reversal_2_converted,cum_reversal_3_converted";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -222,7 +230,12 @@ export async function updateDailyBonuses(
   redis: RedisLike,
   today: string,
   todayActualPrice: number,
-  yesterdayBlob: YesterdayBlob | null
+  yesterdayBlob: YesterdayBlob | null,
+  // Spec wants the actual gold change in the same close-to-close window as
+  // the indicators. When the caller can supply that (e.g. from Yahoo GC=F),
+  // pass it here. Otherwise we fall back to spot-to-spot from kitco prices,
+  // which is dimensionally consistent for tests and the local-dev pipeline.
+  actualChangePctOverride?: number
 ): Promise<void> {
   if (!yesterdayBlob) {
     log("Adaptive: no yesterday data — skipping bonus update");
@@ -275,7 +288,9 @@ export async function updateDailyBonuses(
   };
 
   const actualChangePct =
-    ((todayActualPrice - yesterdayActual) / yesterdayActual) * 100;
+    typeof actualChangePctOverride === "number" && isFinite(actualChangePctOverride)
+      ? actualChangePctOverride
+      : ((todayActualPrice - yesterdayActual) / yesterdayActual) * 100;
 
   if (isZeroInformationDay(actualChangePct, preds)) {
     log(
@@ -333,9 +348,27 @@ export async function appendAccuracyCsvRow(
   cumBonuses: IndicatorMap
 ): Promise<void> {
   const existing = await readKeyRaw(redis, ACCURACY_CSV_KEY);
-  const lines = existing && existing.trim().length > 0
-    ? existing.trimEnd().split("\n")
-    : [ACCURACY_CSV_COLUMNS];
+  let lines: string[];
+  if (existing && existing.trim().length > 0) {
+    const existingLines = existing.trimEnd().split("\n");
+    if (existingLines[0] !== ACCURACY_CSV_COLUMNS) {
+      // Header drift (typically a column-rename rollout). Archive the old file
+      // under a legacy key and start fresh so the live file matches the spec.
+      log(
+        `Adaptive: accuracy CSV header has drifted from spec — archiving to ${ACCURACY_CSV_LEGACY_KEY} and starting fresh`
+      );
+      try {
+        await writeKeyRaw(redis, ACCURACY_CSV_LEGACY_KEY, existing);
+      } catch (e: any) {
+        log(`Adaptive: WARNING — failed to archive legacy accuracy CSV: ${e.message}`);
+      }
+      lines = [ACCURACY_CSV_COLUMNS];
+    } else {
+      lines = existingLines;
+    }
+  } else {
+    lines = [ACCURACY_CSV_COLUMNS];
+  }
 
   const row = [
     entry.date,

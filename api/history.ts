@@ -7,8 +7,15 @@
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Redis } from "@upstash/redis";
+import {
+  loadAdaptiveState,
+  computeCumulativeBonuses,
+  type IndicatorMap,
+} from "./adaptive.js";
 
 const redis = Redis.fromEnv();
+
+const ALL_KEYS: (keyof IndicatorMap)[] = ["d1", "d2", "d3", "r1", "r2", "r3"];
 
 async function readKey(key: string): Promise<string | null> {
   try {
@@ -89,10 +96,32 @@ export default async function handler(
       }
     }
 
+    // Adaptive weighting state — surfaced so the dashboard can render the
+    // weighted net signal and a per-indicator weights panel. Omitted (not
+    // null) when history is empty so the client falls back cleanly to the
+    // equal-weight formula.
+    let adaptive: {
+      cumBonuses: IndicatorMap;
+      weights: IndicatorMap;
+      historyDays: number;
+    } | null = null;
+    try {
+      const state = await loadAdaptiveState(redis as any);
+      if (state.history.length > 0) {
+        const cumBonuses = computeCumulativeBonuses(state);
+        const weights: IndicatorMap = { d1: 0, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };
+        for (const k of ALL_KEYS) weights[k] = 100 + cumBonuses[k];
+        adaptive = { cumBonuses, weights, historyDays: state.history.length };
+      }
+    } catch {
+      // adaptive state is optional — leave null on any failure
+    }
+
     res.status(200).json({
       rows: rows.reverse(),
       lastForecast,
       totalDays: rows.length,
+      adaptive,
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });

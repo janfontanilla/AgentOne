@@ -222,7 +222,28 @@ async function runVercelPipeline(): Promise<void> {
   try {
     if (actualGoldPrice !== null) {
       log("Adaptive: updating daily bonuses from yesterday's predictions...");
-      await updateDailyBonuses(redis, today, actualGoldPrice, yesterdayBlob);
+      // Per spec: score against the same close-to-close window the indicators
+      // use. Pull GC=F from Yahoo for the actual change %; if it fails, the
+      // adaptive module falls back to spot-to-spot from the kitco price.
+      let actualChangePctOverride: number | undefined;
+      try {
+        const gc = await fetchYahooQuote("GC=F");
+        actualChangePctOverride = toPercent(gc.current, gc.prev);
+        log(
+          `Adaptive: GC=F close-to-close: ${gc.prev.toFixed(2)} → ${gc.current.toFixed(2)} (${actualChangePctOverride.toFixed(2)}%)`
+        );
+      } catch (e: any) {
+        log(
+          `Adaptive: GC=F fetch failed (${e.message}) — falling back to kitco spot-to-spot`
+        );
+      }
+      await updateDailyBonuses(
+        redis,
+        today,
+        actualGoldPrice,
+        yesterdayBlob,
+        actualChangePctOverride
+      );
     } else {
       log("Adaptive: skipping bonus update (no actual gold price).");
     }
