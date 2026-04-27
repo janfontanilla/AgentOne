@@ -29,7 +29,7 @@
     }
     .badge-live { background: #1a3a2a; color: #3fb950; }
     .badge-ai { background: #2a1f0d; color: #f0b429; }
-    .badge-v2 { background: #1a2a3a; color: #58a6ff; }
+    .badge-v3 { background: #1a2a3a; color: #58a6ff; }
 
     /* Cards */
     .cards {
@@ -241,6 +241,85 @@
       padding: 0.2rem 0.4rem;
     }
 
+    /* Adaptive Weighting (Stage 3) */
+    .weights-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin-bottom: 2rem;
+    }
+    .weights-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.8rem;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+    .weights-maturity {
+      font-size: 0.75rem;
+      color: #6e7681;
+    }
+    .weights-maturity .mature { color: #3fb950; font-weight: 600; }
+    .weights-maturity .warming { color: #f0b429; font-weight: 600; }
+    .weights-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+    }
+    .weight-row {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 5px;
+      padding: 0.55rem 0.7rem;
+    }
+    .weight-row-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.3rem;
+    }
+    .weight-name { font-size: 0.78rem; color: #c9d1d9; font-weight: 600; }
+    .weight-bonus { font-size: 0.72rem; color: #8b949e; font-variant-numeric: tabular-nums; }
+    .weight-bar-track {
+      height: 6px;
+      background: #21262d;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .weight-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .weight-bar-direct { background: linear-gradient(90deg, #1a3a2a 0%, #3fb950 100%); }
+    .weight-bar-inverse { background: linear-gradient(90deg, #1a2a3a 0%, #58a6ff 100%); }
+    .weight-share { font-size: 0.62rem; color: #6e7681; margin-top: 0.2rem; }
+
+    .net-signal-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.8rem;
+      margin-top: 1rem;
+    }
+    .net-signal-cell {
+      background: #1c2129;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 0.7rem 1rem;
+    }
+    .net-signal-cell.primary { border-color: #58a6ff; }
+    .net-signal-cell .label-line {
+      font-size: 0.7rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.2rem;
+    }
+    .net-signal-cell .value-line { font-size: 1.15rem; font-weight: 700; }
+    .net-signal-cell .sub-line { font-size: 0.68rem; color: #6e7681; margin-top: 0.2rem; }
+
     .footer {
       margin-top: 2rem;
       text-align: center;
@@ -251,7 +330,7 @@
 </head>
 <body>
   <div class="container">
-    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span> <span class="badge badge-v2">Stage 2</span></h1>
+    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span> <span class="badge badge-v3">Stage 3</span></h1>
     <p class="subtitle">
       <span class="badge badge-ai">Llama 3.3 70B</span>
       AI-powered gold price prediction &mdash; 6 market signals &mdash; runs every day at 10:00 AM (Toronto)
@@ -285,6 +364,11 @@
       <div class="empty">Waiting for first pipeline run...</div>
     </div>
 
+    <!-- Adaptive Weighting (Stage 3) -->
+    <h2 class="section-title">Adaptive Weighting <span class="badge badge-v3" style="vertical-align:middle;font-size:0.65rem">Stage 3</span></h2>
+    <p class="section-desc">Self-learning mechanism. Every day each indicator earns 10/5/0 bonus points based on whose forecast was closest to the actual gold change. The rolling sum over the last 10 days becomes the weight `100 + cumulative_bonus`. Indicators that have been more accurate carry more weight in tomorrow's forecast.</p>
+    <div id="weights-panel-mount"></div>
+
     <!-- Chart -->
     <h2 class="section-title">Actual vs Predicted</h2>
     <p class="section-desc">Gold line = real price. Blue dashed = what we predicted. The closer the lines, the better the model.</p>
@@ -301,8 +385,8 @@
     </div>
 
     <div class="footer">
-      Gold Forecast Daily AI Agent — Stage 2<br>
-      kitco.com + Yahoo Finance &bull; Groq Llama 3.3 70B &bull; 6 Market Signals &bull; Daily 10 AM Toronto
+      Gold Forecast Daily AI Agent — Stage 3<br>
+      kitco.com + Yahoo Finance &bull; Groq Llama 3.3 70B &bull; 6 Market Signals &bull; Adaptive 10-Day Self-Learning &bull; Daily 10 AM Toronto
     </div>
   </div>
 
@@ -345,31 +429,43 @@
       return -parseFloat(raw) >= 0 ? 'green' : 'red';
     }
 
-    // Net signal using all 6 indices. If `weights` is provided (per-indicator
-    // weights from the adaptive weighting state, keyed d1/d2/d3/r1/r2/r3),
-    // the signal is the weighted average per upgrade spec §3.5; otherwise
-    // falls back to the equal-weight /6 (or /3 for historical rows missing
-    // the inverse trio).
-    function calcNetSignal(row, weights) {
+    // Equal-weight net signal using all 6 indices (Stage 2 formula)
+    function calcEqualWeightSignal(row) {
       const c1 = fmt(row.c1), c2 = fmt(row.c2), c3 = fmt(row.c3);
       const i1 = fmt(row.i1), i2 = fmt(row.i2), i3 = fmt(row.i3);
       const hasAll = [c1, c2, c3].every(v => v !== null);
       if (!hasAll) return null;
       const hasInverse = [i1, i2, i3].every(v => v !== null);
-      if (hasInverse && weights) {
-        const preds = { d1: c1, d2: c2, d3: c3, r1: -i1, r2: -i2, r3: -i3 };
-        let weighted = 0, total = 0;
-        for (const k of ['d1','d2','d3','r1','r2','r3']) {
-          weighted += preds[k] * weights[k];
-          total += weights[k];
-        }
-        return total > 0 ? weighted / total : null;
-      }
       if (hasInverse) {
         return (c1 + c2 + c3 + (-i1) + (-i2) + (-i3)) / 6;
       }
       // Fallback: old 3-index signal for historical rows
       return (c1 + c2 + c3) / 3;
+    }
+
+    // Adaptive net signal: Σ(weight_i · pred_i) / Σ(weight_i) per supervisor §3.4
+    // weights are { d1, d2, d3, r1, r2, r3 } where r* preds are already negated
+    function calcAdaptiveSignal(row, weights) {
+      if (!weights) return null;
+      const c1 = fmt(row.c1), c2 = fmt(row.c2), c3 = fmt(row.c3);
+      const i1 = fmt(row.i1), i2 = fmt(row.i2), i3 = fmt(row.i3);
+      if ([c1, c2, c3, i1, i2, i3].some(v => v === null)) return null;
+      const preds = { d1: c1, d2: c2, d3: c3, r1: -i1, r2: -i2, r3: -i3 };
+      let weighted = 0, total = 0;
+      for (const k of ['d1', 'd2', 'd3', 'r1', 'r2', 'r3']) {
+        const w = weights[k];
+        if (typeof w !== 'number' || !isFinite(w) || w <= 0) return null;
+        weighted += preds[k] * w;
+        total += w;
+      }
+      return total > 0 ? weighted / total : null;
+    }
+
+    // Pick the best available net signal: adaptive when weights exist, else equal-weight
+    function calcNetSignal(row, weights) {
+      const a = calcAdaptiveSignal(row, weights);
+      if (a !== null) return a;
+      return calcEqualWeightSignal(row);
     }
 
     async function loadData() {
@@ -389,6 +485,9 @@
         }
 
         const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Toronto' });
+        const adaptive = data.adaptive || null;
+        const weights = adaptive ? adaptive.weights : null;
+        renderWeightsPanel(adaptive);
 
         // --- Cards ---
         if (data.rows.length > 0) {
@@ -458,29 +557,34 @@
           const hasDirect = lf.c1 != null && lf.c2 != null && lf.c3 != null;
 
           if (hasDirect) {
-            const adaptive = data.adaptive || null;
-            const useAdaptive = hasInverse && adaptive && adaptive.weights;
-            let netSignal;
-            if (useAdaptive) {
-              const preds = { d1: lf.c1, d2: lf.c2, d3: lf.c3, r1: -lf.i1, r2: -lf.i2, r3: -lf.i3 };
-              let weighted = 0, total = 0;
-              for (const k of ['d1','d2','d3','r1','r2','r3']) {
-                weighted += preds[k] * adaptive.weights[k];
-                total += adaptive.weights[k];
-              }
-              netSignal = total > 0 ? weighted / total : 0;
-            } else if (hasInverse) {
-              netSignal = (lf.c1 + lf.c2 + lf.c3 + (-lf.i1) + (-lf.i2) + (-lf.i3)) / 6;
+            const equalSignal = hasInverse
+              ? ((lf.c1 + lf.c2 + lf.c3 + (-lf.i1) + (-lf.i2) + (-lf.i3)) / 6)
+              : ((lf.c1 + lf.c2 + lf.c3) / 3);
+            const adaptiveSignal = (hasInverse && weights)
+              ? calcAdaptiveSignal(lf, weights)
+              : null;
+            const primary = adaptiveSignal !== null ? adaptiveSignal : equalSignal;
+            const dir = primary >= 0 ? 'upward' : 'downward';
+            const netCls = primary >= 0 ? 'green' : 'red';
+            const headlineLabel = adaptiveSignal !== null ? 'Adaptive net signal' : 'Net signal';
+            html += '<div class="forecast-line">' + headlineLabel + ': <span class="' + netCls + '">' + (primary >= 0 ? '+' : '') + primary.toFixed(2) + '%</span> ' + dir + ' pressure</div>';
+            if (adaptiveSignal !== null) {
+              html += '<div class="forecast-explain">Weighted by 10-day rolling accuracy bonuses. Positive = gold predicted to rise tomorrow.</div>';
+              html += '<div class="net-signal-pair">';
+              const aCls = adaptiveSignal >= 0 ? 'green' : 'red';
+              html += '<div class="net-signal-cell primary"><div class="label-line">Adaptive (Stage 3)</div>';
+              html += '<div class="value-line ' + aCls + '">' + (adaptiveSignal >= 0 ? '+' : '') + adaptiveSignal.toFixed(2) + '%</div>';
+              html += '<div class="sub-line">&Sigma;(weight&middot;pred) / &Sigma;(weight) over 6 indicators</div></div>';
+              const eCls = equalSignal >= 0 ? 'green' : 'red';
+              const delta = adaptiveSignal - equalSignal;
+              const deltaStr = (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%';
+              html += '<div class="net-signal-cell"><div class="label-line">Equal weight (Stage 2)</div>';
+              html += '<div class="value-line ' + eCls + '">' + (equalSignal >= 0 ? '+' : '') + equalSignal.toFixed(2) + '%</div>';
+              html += '<div class="sub-line">Adaptive shifted by ' + deltaStr + ' vs flat average</div></div>';
+              html += '</div>';
             } else {
-              netSignal = (lf.c1 + lf.c2 + lf.c3) / 3;
+              html += '<div class="forecast-explain">Average of ' + (hasInverse ? '6 indices (3 direct + 3 inverse)' : '3 direct indices') + '. Positive = gold predicted to rise tomorrow.' + (hasInverse ? ' Adaptive weights apply once history is collected.' : '') + '</div>';
             }
-            const dir = netSignal >= 0 ? 'upward' : 'downward';
-            const netCls = netSignal >= 0 ? 'green' : 'red';
-            html += '<div class="forecast-line">Net signal: <span class="' + netCls + '">' + (netSignal >= 0 ? '+' : '') + netSignal.toFixed(2) + '%</span> ' + dir + ' pressure</div>';
-            const explain = useAdaptive
-              ? 'Adaptive-weighted average of 6 indices (weights below, learned from the last ' + adaptive.historyDays + ' days). Positive = gold predicted to rise tomorrow.'
-              : 'Average of ' + (hasInverse ? '6 indices (3 direct + 3 inverse)' : '3 direct indices') + '. Positive = gold predicted to rise tomorrow.';
-            html += '<div class="forecast-explain">' + explain + '</div>';
 
             html += '<div class="signal-groups">';
 
@@ -507,24 +611,6 @@
             html += '</div></div>';
 
             html += '</div>'; // .signal-groups
-
-            if (useAdaptive) {
-              const labels = {
-                d1: 'Mining (D1)', d2: 'AUDUSD (D2)', d3: 'Silver (D3)',
-                r1: 'Equities (R1)', r2: 'DXY (R2)', r3: 'TLT (R3)',
-              };
-              html += '<div style="margin-top:0.8rem;padding:0.6rem 0.7rem;background:#0d1117;border:1px solid #21262d;border-radius:6px;">';
-              html += '<div style="font-size:0.7rem;color:#8b949e;margin-bottom:0.4rem;">Adaptive weights &mdash; learned over the last ' + adaptive.historyDays + ' days. Each indicator earns +10/+5/0 per day for being closest to the actual gold change. Weight = 100 + cumulative bonus.</div>';
-              html += '<div style="display:flex;flex-wrap:wrap;gap:0.4rem 1rem;font-size:0.75rem;">';
-              for (const k of ['d1','d2','d3','r1','r2','r3']) {
-                const w = adaptive.weights[k];
-                const bonus = adaptive.cumBonuses[k];
-                const sign = bonus > 0 ? '+' : '';
-                const cls = bonus > 0 ? 'green' : (bonus < 0 ? 'red' : 'neutral');
-                html += '<div><span style="color:#8b949e;">' + labels[k] + ':</span> <strong>' + w.toFixed(0) + '</strong> <span class="' + cls + '" style="font-size:0.7rem;">(' + sign + bonus + ')</span></div>';
-              }
-              html += '</div></div>';
-            }
           }
 
           if (html) document.getElementById('analysis-box').innerHTML = html;
@@ -564,8 +650,8 @@
           const isToday = row.date === today;
           const devClass = devVal !== null ? (Math.abs(devVal) < 50 ? 'green' : 'red') : 'empty';
 
-          // Net signal column
-          const net = calcNetSignal(row);
+          // Net signal column (uses adaptive weights when available)
+          const net = calcNetSignal(row, weights);
           let signalHtml = '<span class="empty">--</span>';
           if (net !== null) {
             const cls = net >= 0 ? 'green' : 'red';
@@ -627,6 +713,74 @@
         document.getElementById('table-container').innerHTML =
           '<div class="loading">Failed to load data. Try refreshing the page.</div>';
       }
+    }
+
+    // Render the Stage 3 adaptive weighting panel.
+    // Shows per-indicator cumulative bonus, share of total weight, and history maturity.
+    function renderWeightsPanel(adaptive) {
+      const mount = document.getElementById('weights-panel-mount');
+      if (!mount) return;
+
+      const indicators = [
+        { key: 'd1', name: 'Mining Stocks', hint: 'NEM &amp; GOLD avg', group: 'direct' },
+        { key: 'd2', name: 'AUD/USD Forex', hint: 'Aussie Dollar', group: 'direct' },
+        { key: 'd3', name: 'Silver (SLV)',  hint: 'iShares Silver Trust', group: 'direct' },
+        { key: 'r1', name: 'US Equities',   hint: 'SPY/DIA/QQQ/IWM', group: 'inverse' },
+        { key: 'r2', name: 'Dollar Index',  hint: 'DXY', group: 'inverse' },
+        { key: 'r3', name: 'Bond Yields',   hint: 'TLT', group: 'inverse' },
+      ];
+
+      if (!adaptive || !adaptive.weights) {
+        let html = '<div class="weights-panel">';
+        html += '<div class="weights-meta">';
+        html += '<div class="weights-maturity">No accuracy history yet &mdash; <span class="warming">all 6 indicators weighted equally</span> until daily bonuses accumulate.</div>';
+        html += '</div>';
+        html += '<div class="weights-grid">';
+        for (const ind of indicators) {
+          const cls = ind.group === 'direct' ? 'weight-bar-direct' : 'weight-bar-inverse';
+          html += '<div class="weight-row">';
+          html += '<div class="weight-row-top"><span class="weight-name">' + ind.name + '</span><span class="weight-bonus">+0 bonus</span></div>';
+          html += '<div class="weight-bar-track"><div class="weight-bar-fill ' + cls + '" style="width:50%"></div></div>';
+          html += '<div class="weight-share">100 weight &middot; 16.67% share &middot; ' + ind.hint + '</div>';
+          html += '</div>';
+        }
+        html += '</div></div>';
+        mount.innerHTML = html;
+        return;
+      }
+
+      const days = adaptive.historyDays || 0;
+      const totalWeight = indicators.reduce((s, ind) => s + (adaptive.weights[ind.key] || 0), 0);
+      const maxBarWeight = 200; // weight ranges 100..200, use 200 as the bar's full extent
+      const maturityCls = days >= 10 ? 'mature' : 'warming';
+      const maturityText = days >= 10
+        ? days + ' / 10 days collected (mature)'
+        : days + ' / 10 days collected (warming up)';
+
+      let html = '<div class="weights-panel">';
+      html += '<div class="weights-meta">';
+      html += '<div class="weights-maturity">Rolling window: <span class="' + maturityCls + '">' + maturityText + '</span></div>';
+      html += '<div class="weights-maturity">Total weight pool: <strong>' + totalWeight.toFixed(0) + '</strong> (range 600–' + (6 * maxBarWeight) + ')</div>';
+      html += '</div>';
+      html += '<div class="weights-grid">';
+      for (const ind of indicators) {
+        const w = adaptive.weights[ind.key] || 100;
+        const bonus = adaptive.cumBonuses && typeof adaptive.cumBonuses[ind.key] === 'number'
+          ? adaptive.cumBonuses[ind.key]
+          : (w - 100);
+        const share = totalWeight > 0 ? ((w / totalWeight) * 100).toFixed(1) : '16.7';
+        const barPct = Math.min(100, Math.max(0, (w / maxBarWeight) * 100));
+        const cls = ind.group === 'direct' ? 'weight-bar-direct' : 'weight-bar-inverse';
+        const bonusFmt = bonus % 1 === 0 ? bonus.toFixed(0) : bonus.toFixed(1);
+        html += '<div class="weight-row">';
+        html += '<div class="weight-row-top"><span class="weight-name">' + ind.name + '</span>';
+        html += '<span class="weight-bonus">+' + bonusFmt + ' bonus &middot; weight ' + w.toFixed(0) + '</span></div>';
+        html += '<div class="weight-bar-track"><div class="weight-bar-fill ' + cls + '" style="width:' + barPct.toFixed(1) + '%"></div></div>';
+        html += '<div class="weight-share">' + share + '% of forecast share &middot; ' + ind.hint + '</div>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+      mount.innerHTML = html;
     }
 
     // Build a signal pill for the analysis box
