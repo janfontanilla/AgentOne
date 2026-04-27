@@ -503,19 +503,21 @@ describe("Vercel deployment validation", () => {
     assert.ok(html.includes("/api/history"));
   });
 
-  it("forecast API uses Vercel Blob for storage", () => {
+  it("forecast API uses Upstash Redis for storage", () => {
     const source = fs.readFileSync(path.join(SCRIPT_DIR, "api", "forecast.ts"), "utf-8");
-    assert.ok(source.includes("@vercel/blob"));
+    assert.ok(source.includes("@upstash/redis"), "forecast.ts should import @upstash/redis");
   });
 
   it("forecast API has maxDuration config", () => {
-    const source = fs.readFileSync(path.join(SCRIPT_DIR, "api", "forecast.ts"), "utf-8");
-    assert.ok(source.includes("maxDuration"));
+    const vercelConfig = JSON.parse(
+      fs.readFileSync(path.join(SCRIPT_DIR, "vercel.json"), "utf-8"),
+    );
+    assert.ok(vercelConfig.functions?.["api/forecast.ts"]?.maxDuration);
   });
 
-  it("package.json has @vercel/blob dependency", () => {
+  it("package.json has @upstash/redis dependency", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "package.json"), "utf-8"));
-    assert.ok(pkg.dependencies["@vercel/blob"], "Should have @vercel/blob");
+    assert.ok(pkg.dependencies["@upstash/redis"], "Should have @upstash/redis");
   });
 });
 
@@ -686,9 +688,11 @@ describe("Project structure", () => {
     assert.ok(readme.includes("Vercel") || readme.includes("vercel"));
   });
 
-  it("README mentions Quick Start", () => {
+  it("README has an installation/setup section", () => {
     const readme = fs.readFileSync(path.join(SCRIPT_DIR, "README.md"), "utf-8");
-    assert.ok(readme.includes("Quick Start"));
+    assert.ok(
+      readme.includes("Installation") || readme.includes("Setup") || readme.includes("Quick Start"),
+    );
   });
 });
 

@@ -18,3 +18,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Knowledge graph cache (graphify skill output)
+graphify-out/
+.graphify_*
+
+# One-off scratch scripts and backups
+.tmp_*.py
+*.local_backup
