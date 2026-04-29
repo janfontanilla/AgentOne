@@ -31,4 +31,6 @@ graphify-out/
 .claude/
 
 # Reference materials (PDFs, docx, screenshots from supervisor / meetings)
-docs/
+docs/*
+# but track team-authored docs
+!docs/ONBOARDING.md
