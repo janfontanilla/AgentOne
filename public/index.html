@@ -733,17 +733,7 @@
       if (!adaptive || !adaptive.weights) {
         let html = '<div class="weights-panel">';
         html += '<div class="weights-meta">';
-        html += '<div class="weights-maturity">No accuracy history yet &mdash; <span class="warming">all 6 indicators weighted equally</span> until daily bonuses accumulate.</div>';
-        html += '</div>';
-        html += '<div class="weights-grid">';
-        for (const ind of indicators) {
-          const cls = ind.group === 'direct' ? 'weight-bar-direct' : 'weight-bar-inverse';
-          html += '<div class="weight-row">';
-          html += '<div class="weight-row-top"><span class="weight-name">' + ind.name + '</span><span class="weight-bonus">+0 bonus</span></div>';
-          html += '<div class="weight-bar-track"><div class="weight-bar-fill ' + cls + '" style="width:50%"></div></div>';
-          html += '<div class="weight-share">100 weight &middot; 16.67% share &middot; ' + ind.hint + '</div>';
-          html += '</div>';
-        }
+        html += '<div class="weights-maturity">No accuracy history yet &mdash; <span class="warming">all 6 indicators weighted equally</span> until daily bonuses accumulate. Per-indicator weights will appear here once the first day of bonuses is scored.</div>';
         html += '</div></div>';
         mount.innerHTML = html;
         return;
