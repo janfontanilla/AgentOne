@@ -19,7 +19,7 @@ import {
   fetchYahooQuote,
   fetchKitcoGoldPrice,
   action1_newsArticle,
-} from "./gold_forecast_agent.js";
+} from "../gold_forecast_agent.js";
 import {
   loadAdaptiveState,
   loadYesterdayBlob,
