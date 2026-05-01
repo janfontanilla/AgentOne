@@ -97,6 +97,15 @@ export async function fetchYahooQuote(
   if (!resp.ok)
     throw new Error(`Yahoo Finance failed for ${symbol}: ${resp.status}`);
   const data = await resp.json();
+  // Yahoo returns 200 with an `error` field for delisted/typo'd symbols.
+  // Surface that explicitly so a real symbol problem isn't reported as
+  // "Not enough data" (which sounds transient).
+  const yahooErr = data?.chart?.error;
+  if (yahooErr) {
+    throw new Error(
+      `Yahoo Finance rejected ${symbol}: ${yahooErr.code ?? "unknown"} ${yahooErr.description ?? ""}`.trim()
+    );
+  }
   const closes: number[] =
     data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close ?? [];
   const valid = closes.filter((v: number) => v != null && !isNaN(v));
@@ -241,7 +250,15 @@ async function searchForGoldUrls(): Promise<string[]> {
         `https://api.duckduckgo.com/?q=gold+price+tomorrow&format=json&no_redirect=1&no_html=1`,
         { headers: { "User-Agent": "Mozilla/5.0" } }
       );
-      const data = await resp.json();
+      // DDG sometimes returns 200 with an empty body; resp.json() then throws
+      // a generic "Unexpected end of JSON input". Read text first so we can
+      // log the real condition.
+      const text = await resp.text();
+      if (!text.trim()) {
+        log("Action 1: DuckDuckGo API returned empty body — skipping");
+        throw new Error("empty body");
+      }
+      const data = JSON.parse(text);
       for (const t of (data.RelatedTopics ?? [])) {
         if (t.FirstURL) addUrl(t.FirstURL);
         // Subtopics

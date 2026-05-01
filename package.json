@@ -5,8 +5,9 @@
   "main": "gold_forecast_agent.ts",
   "scripts": {
     "start": "npx tsx gold_forecast_agent.ts",
-    "test": "npx tsx --test test_gold_forecast.ts",
-    "test:long": "RUN_LONG_TESTS=1 npx tsx --test test_gold_forecast.ts"
+    "typecheck": "npx tsc --noEmit",
+    "test": "npm run typecheck && npx tsx --test test_gold_forecast.ts test_adaptive.ts",
+    "test:long": "npm run typecheck && RUN_LONG_TESTS=1 npx tsx --test test_gold_forecast.ts test_adaptive.ts"
   },
   "keywords": [],
   "author": "",
