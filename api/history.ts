@@ -1,8 +1,19 @@
 /**
- * Vercel API Route — Returns forecast history data
- * Used by the dashboard to display the CSV table and latest forecast.
+ * Vercel API Route — read-only JSON endpoint that powers the dashboard.
  *
- * Stage 2: Extended to return i1, i2, i3 (inverse index raw values) per row.
+ * GET /api/history → {
+ *   rows:        per-day records merged from gold_forecast_history.csv
+ *                and analysis_history.json (article + 3 direct + 3
+ *                inverse indicator readings), newest first;
+ *   lastForecast: the most recent last_forecast.json blob;
+ *   totalDays:    rows.length;
+ *   adaptive:    cumulative bonuses, current weights, and history depth
+ *                (null when no adaptive history has been collected yet,
+ *                so the client can fall back to the equal-weight signal).
+ * }
+ *
+ * Side-effect free: all reads are from Upstash Redis. No state is
+ * written here; the daily cron in api/forecast.ts is the only writer.
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";

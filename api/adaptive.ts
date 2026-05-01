@@ -10,7 +10,9 @@
  * Reversal predictions (r1/r2/r3) are stored already-negated so there is
  * one source of truth and no sign-drift bugs.
  *
- * See ADAPTIVE_WEIGHTING_PLAN.md for full design.
+ * See PLANNING.md §3 for the design rationale and the indicator-mapping
+ * table, and agentone/docs/Prompt_for_Upgrading_AI_Agent_v3.docx for the
+ * source spec this module implements literally.
  */
 
 import { log, torontoDateStr } from "../gold_forecast_agent.js";

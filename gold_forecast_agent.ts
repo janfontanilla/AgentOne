@@ -1,11 +1,25 @@
 /**
- * Gold Forecast Daily AI Agent — Standalone TypeScript
+ * Gold Forecast Daily AI Agent — local-dev pipeline + shared library.
  *
- * Runs the 7-action pipeline per the PDF spec.
- * Uses local CSV + JSON for persistence.
+ * This file plays two roles:
  *
- * Run:   deno run --allow-net --allow-read --allow-write --allow-env agentone/gold_forecast_agent.ts
- * Or:    npx tsx agentone/gold_forecast_agent.ts
+ * 1. **Local-dev runner.** When executed directly (`npx tsx
+ *    gold_forecast_agent.ts`), it runs the original 7-action pipeline
+ *    from the Gold_Forecast_Spec_v1.pdf and persists state to local
+ *    files under `data/`. Useful for offline iteration and the
+ *    `npm test` integration suite — never invoked in production.
+ *
+ * 2. **Shared library.** It exports the building blocks the production
+ *    pipeline (`api/forecast.ts`) and the read-only history endpoint
+ *    (`api/history.ts`) reuse: HTTP fetchers (`fetchYahooQuote`,
+ *    `fetchKitcoGoldPrice`), the Groq news-synthesis action
+ *    (`action1_newsArticle`), the log buffer, the percent helper, and
+ *    the Toronto-time formatters. The production pipeline is a
+ *    superset (10 actions, Upstash storage, adaptive weighting) that
+ *    builds on these primitives.
+ *
+ * Run locally:  npx tsx agentone/gold_forecast_agent.ts
+ * Production:   triggered by Vercel cron via api/forecast.ts handler.
  */
 
 import * as fs from "node:fs";
@@ -84,11 +98,20 @@ export function torontoDateStr(): string {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+/** Percent change from `prev` to `current`. Returns 0 when `prev` is 0/falsy
+ *  to keep failed indicators from poisoning downstream averages. */
 export function toPercent(current: number, prev: number): number {
   if (!prev || prev === 0) return 0;
   return ((current - prev) / prev) * 100;
 }
 
+/** Fetch the last two valid daily closes for a Yahoo symbol.
+ *
+ *  Returns `{ current, prev }` so callers can compute close-to-close
+ *  percent change without re-hitting the API. The 5-day range
+ *  guarantees ≥2 data points across weekends, holidays, and pre-market
+ *  hours (PDF spec §"24-hour fallback"). Throws on Yahoo's 200-with-error
+ *  responses for delisted symbols rather than silently returning zeros. */
 export async function fetchYahooQuote(
   symbol: string
 ): Promise<{ current: number; prev: number }> {
@@ -178,6 +201,12 @@ function loadYesterdayForecast(): number | null {
 
 // ─── Gold Price from kitco.com (with Yahoo fallback) ─────────────────────────
 
+/** Fetch today's spot gold price in USD per troy ounce.
+ *
+ *  Primary source is kitco.com (PDF spec §6 names it explicitly). Falls
+ *  back to Yahoo's GC=F gold futures last close if kitco fails or returns
+ *  an out-of-range price. Validates the result is between $1,000 and
+ *  $10,000 to catch HTML-extraction false positives. */
 export async function fetchKitcoGoldPrice(): Promise<number> {
   // Primary: kitco.com (per PDF spec)
   try {
@@ -212,6 +241,15 @@ export async function fetchKitcoGoldPrice(): Promise<number> {
 }
 
 // ─── Action 1: Web Search + Page Scraping + Groq Llama 3.3 70B ──────────────
+//
+// PDF spec §1: scrape up to 20 gold-related news pages, then have an LLM
+// summarize them in ≤25 words. Implemented in three steps:
+//   1. searchForGoldUrls() — collect up to 20 URLs from Google + DuckDuckGo
+//      + a curated list of always-reachable gold news sites + Yahoo RSS.
+//   2. extractPageText() — strip each page to readable text (no headless
+//      browser; we just regex out scripts, styles, and tags).
+//   3. action1_newsArticle() — concatenate the texts and ask Groq's
+//      Llama 3.3 70B for a short outlook. Static-text fallback if no key.
 
 /** Collect up to 20 gold-related URLs from multiple sources. */
 async function searchForGoldUrls(): Promise<string[]> {
@@ -329,6 +367,13 @@ async function extractPageText(url: string): Promise<string> {
   return text.slice(0, 1500);
 }
 
+/** PDF Action 1: produce a short gold-outlook article from scraped news.
+ *
+ *  Returns either the LLM's synthesis (when `GROQ_API_KEY` is set) or a
+ *  static neutral-tone placeholder. Never throws — failures are logged
+ *  and the placeholder is returned so the rest of the pipeline keeps
+ *  running. The article is for human display only; the numeric forecast
+ *  is computed from market indicators, not from this text. */
 export async function action1_newsArticle(): Promise<string> {
   const groqKey = process.env.GROQ_API_KEY ?? "";
 

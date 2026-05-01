@@ -6,8 +6,9 @@
  *
  * Forecast is the adaptive-weighted average of six indicators (3 direct +
  * 3 reversal), where each weight is `100 + cumulative_bonus_i` over the
- * rolling 10-day accuracy window. See ADAPTIVE_WEIGHTING_PLAN.md and the
- * upgrade spec at agentone/docs/Prompt_for_Upgrading_AI_Agent_v3.docx.
+ * rolling 10-day accuracy window. See PLANNING.md §3 for the design and
+ * the upgrade spec at agentone/docs/Prompt_for_Upgrading_AI_Agent_v3.docx
+ * for the source requirements.
  */
 
 import { timingSafeEqual } from "node:crypto";
