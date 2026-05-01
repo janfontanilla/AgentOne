@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 
 import {
   rankAndAssignBonuses,
-  isZeroInformationDay,
   computeCumulativeBonuses,
   computeAdaptiveForecast,
   loadAdaptiveState,
@@ -77,50 +76,28 @@ describe("rankAndAssignBonuses", () => {
     assert.equal(bonuses.d3, 0);
   });
 
-  it("three-way tie distributes 5/5/5", () => {
+  it("three-way tie resolved by stable sort (input order keeps 10/5/0)", () => {
     const errors: IndicatorMap = { d1: 0.4, d2: 0.4, d3: 0.4, r1: 0, r2: 0, r3: 0 };
     const bonuses = rankAndAssignBonuses(["d1", "d2", "d3"], errors);
-    assert.equal(bonuses.d1, 5);
+    assert.equal(bonuses.d1, 10);
     assert.equal(bonuses.d2, 5);
-    assert.equal(bonuses.d3, 5);
-  });
-
-  it("two-way top tie distributes 7.5/7.5/0", () => {
-    const errors: IndicatorMap = { d1: 0.2, d2: 0.2, d3: 1.0, r1: 0, r2: 0, r3: 0 };
-    const bonuses = rankAndAssignBonuses(["d1", "d2", "d3"], errors);
-    assert.equal(bonuses.d1, 7.5);
-    assert.equal(bonuses.d2, 7.5);
     assert.equal(bonuses.d3, 0);
   });
 
-  it("two-way bottom tie distributes 10/2.5/2.5", () => {
+  it("two-way top tie keeps integer 10/5/0 by sort stability", () => {
+    const errors: IndicatorMap = { d1: 0.2, d2: 0.2, d3: 1.0, r1: 0, r2: 0, r3: 0 };
+    const bonuses = rankAndAssignBonuses(["d1", "d2", "d3"], errors);
+    assert.equal(bonuses.d1, 10);
+    assert.equal(bonuses.d2, 5);
+    assert.equal(bonuses.d3, 0);
+  });
+
+  it("two-way bottom tie keeps integer 10/5/0 by sort stability", () => {
     const errors: IndicatorMap = { d1: 0.1, d2: 0.5, d3: 0.5, r1: 0, r2: 0, r3: 0 };
     const bonuses = rankAndAssignBonuses(["d1", "d2", "d3"], errors);
     assert.equal(bonuses.d1, 10);
-    assert.equal(bonuses.d2, 2.5);
-    assert.equal(bonuses.d3, 2.5);
-  });
-});
-
-describe("isZeroInformationDay", () => {
-  it("returns true on flat day with flat preds", () => {
-    const preds: IndicatorMap = { d1: 0.001, d2: 0, d3: -0.001, r1: 0, r2: 0, r3: 0 };
-    assert.equal(isZeroInformationDay(0.005, preds), true);
-  });
-
-  it("returns false on real movement", () => {
-    const preds: IndicatorMap = { d1: 0.5, d2: 0.4, d3: 0.3, r1: 0.2, r2: 0.1, r3: 0.6 };
-    assert.equal(isZeroInformationDay(0.45, preds), false);
-  });
-
-  it("returns false when actual moves but preds are flat", () => {
-    const preds: IndicatorMap = { d1: 0, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };
-    assert.equal(isZeroInformationDay(0.5, preds), false);
-  });
-
-  it("returns false when preds disagree even if actual is flat", () => {
-    const preds: IndicatorMap = { d1: 0.5, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };
-    assert.equal(isZeroInformationDay(0, preds), false);
+    assert.equal(bonuses.d2, 5);
+    assert.equal(bonuses.d3, 0);
   });
 });
 
@@ -257,7 +234,7 @@ describe("updateDailyBonuses guards", () => {
 
   it("skips when yesterdayBlob is null", async () => {
     const redis = new MockRedis();
-    await updateDailyBonuses(redis as any, "2026-04-26", 2050, null);
+    await updateDailyBonuses(redis as any,2050, null);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 0);
   });
@@ -271,7 +248,7 @@ describe("updateDailyBonuses guards", () => {
       i1: 0.2, i2: 0.4, i3: 0.6,
       // actual_gold_price missing
     };
-    await updateDailyBonuses(redis as any, "2026-04-26", 2050, blob);
+    await updateDailyBonuses(redis as any,2050, blob);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 0);
   });
@@ -285,7 +262,7 @@ describe("updateDailyBonuses guards", () => {
       i1: 0.2, i2: 0.4, i3: 0.6,
       actual_gold_price: 0,
     };
-    await updateDailyBonuses(redis as any, "2026-04-26", 2050, blob);
+    await updateDailyBonuses(redis as any,2050, blob);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 0);
   });
@@ -299,7 +276,7 @@ describe("updateDailyBonuses guards", () => {
       i1: 0.2, i2: 0.4, i3: 0.6,
       actual_gold_price: 2000,
     };
-    await updateDailyBonuses(redis as any, "2026-04-26", NaN, blob);
+    await updateDailyBonuses(redis as any,NaN, blob);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 0);
   });
@@ -313,7 +290,7 @@ describe("updateDailyBonuses guards", () => {
       i1: 0.2, i2: 0.4, i3: 0.6,
       actual_gold_price: 2000,
     };
-    await updateDailyBonuses(redis as any, "2026-04-26", 2050, blob);
+    await updateDailyBonuses(redis as any,2050, blob);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 0);
   });
@@ -327,8 +304,8 @@ describe("updateDailyBonuses guards", () => {
       i1: 0.2, i2: 0.4, i3: 0.6,
       actual_gold_price: 2000,
     };
-    await updateDailyBonuses(redis as any, "2026-04-26", 2050, blob);
-    await updateDailyBonuses(redis as any, "2026-04-26", 2050, blob);
+    await updateDailyBonuses(redis as any,2050, blob);
+    await updateDailyBonuses(redis as any,2050, blob);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 1);
   });
@@ -347,38 +324,23 @@ describe("updateDailyBonuses guards", () => {
       actual_gold_price: 2000,
     };
     // today_actual = 2040 → actual change = +2%
-    await updateDailyBonuses(redis as any, "2026-04-26", 2040, blob);
+    await updateDailyBonuses(redis as any,2040, blob);
     const state = await loadAdaptiveState(redis as any);
     assert.equal(state.history.length, 1);
     const e = state.history[0];
     assert.equal(e.date, "2026-04-25");
     assert.ok(Math.abs(e.actualChangePct - 2.0) < 1e-9);
-    // d1 pred 2.0, error 0 → winner (10)
-    // d2 pred 1.0, error 1 → middle (5)
-    // d3 pred 3.0, error 1 → middle... actually d2 and d3 tied at error=1
-    // d1 error = |2 - 2| = 0, d2 error = 1, d3 error = 1 → bottom tie 2.5/2.5
+    // d1 pred 2.0 → error 0 (winner, 10)
+    // d2 pred 1.0 → error 1, d3 pred 3.0 → error 1 (tied)
+    // Strict 10/5/0: stable sort keeps d2 ahead of d3 → d2=5, d3=0
     assert.equal(e.bonuses.d1, 10);
-    assert.equal(e.bonuses.d2, 2.5);
-    assert.equal(e.bonuses.d3, 2.5);
+    assert.equal(e.bonuses.d2, 5);
+    assert.equal(e.bonuses.d3, 0);
     // r1 pred 1.0 (error 1), r2 pred 2.0 (error 0, winner), r3 pred 3.0 (error 1)
+    // Stable sort: r2 first, then r1 before r3 → r2=10, r1=5, r3=0
     assert.equal(e.bonuses.r2, 10);
-    assert.equal(e.bonuses.r1, 2.5);
-    assert.equal(e.bonuses.r3, 2.5);
-  });
-
-  it("skips on zero-information day", async () => {
-    const redis = new MockRedis();
-    const blob: YesterdayBlob = {
-      date: "2026-04-25",
-      forecast: 2000,
-      c1: 0, c2: 0, c3: 0,
-      i1: 0, i2: 0, i3: 0,
-      actual_gold_price: 2000,
-    };
-    // today same as yesterday → 0% change
-    await updateDailyBonuses(redis as any, "2026-04-26", 2000, blob);
-    const state = await loadAdaptiveState(redis as any);
-    assert.equal(state.history.length, 0);
+    assert.equal(e.bonuses.r1, 5);
+    assert.equal(e.bonuses.r3, 0);
   });
 });
 
@@ -429,7 +391,7 @@ describe("Daily summary log format (spec §3.5)", () => {
       i1: -0.2, i2: -0.4, i3: -0.6,
       actual_gold_price: 2000,
     };
-    await updateDailyBonuses(redis as any, "2026-04-26", 2010, blob);
+    await updateDailyBonuses(redis as any,2010, blob);
     const all = logs.join("\n");
     assert.ok(all.includes("Date:"), "missing 'Date:'");
     assert.ok(all.includes("Actual gold change:"), "missing 'Actual gold change:'");

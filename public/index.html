@@ -29,7 +29,6 @@
     }
     .badge-live { background: #1a3a2a; color: #3fb950; }
     .badge-ai { background: #2a1f0d; color: #f0b429; }
-    .badge-v3 { background: #1a2a3a; color: #58a6ff; }
 
     /* Cards */
     .cards {
@@ -241,7 +240,7 @@
       padding: 0.2rem 0.4rem;
     }
 
-    /* Adaptive Weighting (Stage 3) */
+    /* Adaptive Weighting */
     .weights-panel {
       background: #161b22;
       border: 1px solid #30363d;
@@ -330,7 +329,7 @@
 </head>
 <body>
   <div class="container">
-    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span> <span class="badge badge-v3">Stage 3</span></h1>
+    <h1>Gold Forecast Daily <span class="badge badge-live">LIVE</span></h1>
     <p class="subtitle">
       <span class="badge badge-ai">Llama 3.3 70B</span>
       AI-powered gold price prediction &mdash; 6 market signals &mdash; runs every day at 10:00 AM (Toronto)
@@ -364,8 +363,8 @@
       <div class="empty">Waiting for first pipeline run...</div>
     </div>
 
-    <!-- Adaptive Weighting (Stage 3) -->
-    <h2 class="section-title">Adaptive Weighting <span class="badge badge-v3" style="vertical-align:middle;font-size:0.65rem">Stage 3</span></h2>
+    <!-- Adaptive Weighting -->
+    <h2 class="section-title">Adaptive Weighting</h2>
     <p class="section-desc">Self-learning mechanism. Every day each indicator earns 10/5/0 bonus points based on whose forecast was closest to the actual gold change. The rolling sum over the last 10 days becomes the weight `100 + cumulative_bonus`. Indicators that have been more accurate carry more weight in tomorrow's forecast.</p>
     <div id="weights-panel-mount"></div>
 
@@ -385,7 +384,7 @@
     </div>
 
     <div class="footer">
-      Gold Forecast Daily AI Agent — Stage 3<br>
+      Gold Forecast Daily AI Agent<br>
       kitco.com + Yahoo Finance &bull; Groq Llama 3.3 70B &bull; 6 Market Signals &bull; Adaptive 10-Day Self-Learning &bull; Daily 10 AM Toronto
     </div>
   </div>
@@ -429,7 +428,7 @@
       return -parseFloat(raw) >= 0 ? 'green' : 'red';
     }
 
-    // Equal-weight net signal using all 6 indices (Stage 2 formula)
+    // Equal-weight net signal using all 6 indices
     function calcEqualWeightSignal(row) {
       const c1 = fmt(row.c1), c2 = fmt(row.c2), c3 = fmt(row.c3);
       const i1 = fmt(row.i1), i2 = fmt(row.i2), i3 = fmt(row.i3);
@@ -572,13 +571,13 @@
               html += '<div class="forecast-explain">Weighted by 10-day rolling accuracy bonuses. Positive = gold predicted to rise tomorrow.</div>';
               html += '<div class="net-signal-pair">';
               const aCls = adaptiveSignal >= 0 ? 'green' : 'red';
-              html += '<div class="net-signal-cell primary"><div class="label-line">Adaptive (Stage 3)</div>';
+              html += '<div class="net-signal-cell primary"><div class="label-line">Adaptive</div>';
               html += '<div class="value-line ' + aCls + '">' + (adaptiveSignal >= 0 ? '+' : '') + adaptiveSignal.toFixed(2) + '%</div>';
               html += '<div class="sub-line">&Sigma;(weight&middot;pred) / &Sigma;(weight) over 6 indicators</div></div>';
               const eCls = equalSignal >= 0 ? 'green' : 'red';
               const delta = adaptiveSignal - equalSignal;
               const deltaStr = (delta >= 0 ? '+' : '') + delta.toFixed(2) + '%';
-              html += '<div class="net-signal-cell"><div class="label-line">Equal weight (Stage 2)</div>';
+              html += '<div class="net-signal-cell"><div class="label-line">Equal weight</div>';
               html += '<div class="value-line ' + eCls + '">' + (equalSignal >= 0 ? '+' : '') + equalSignal.toFixed(2) + '%</div>';
               html += '<div class="sub-line">Adaptive shifted by ' + deltaStr + ' vs flat average</div></div>';
               html += '</div>';
@@ -715,7 +714,7 @@
       }
     }
 
-    // Render the Stage 3 adaptive weighting panel.
+    // Render the adaptive weighting panel.
     // Shows per-indicator cumulative bonus, share of total weight, and history maturity.
     function renderWeightsPanel(adaptive) {
       const mount = document.getElementById('weights-panel-mount');

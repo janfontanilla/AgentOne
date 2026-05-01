@@ -53,7 +53,6 @@ const ACCURACY_CSV_KEY = "gold_forecast_accuracy.csv";
 const ACCURACY_CSV_LEGACY_KEY = "gold_forecast_accuracy_legacy.csv";
 const LAST_FORECAST_KEY = "last_forecast.json";
 const MAX_HISTORY = 10;
-const ZERO_INFO_EPSILON = 0.01; // 0.01% — smaller than meaningful market movement
 const DIRECT_GROUP: IndicatorKey[] = ["d1", "d2", "d3"];
 const REVERSAL_GROUP: IndicatorKey[] = ["r1", "r2", "r3"];
 const ALL_KEYS: IndicatorKey[] = ["d1", "d2", "d3", "r1", "r2", "r3"];
@@ -78,15 +77,14 @@ function emptyMap(): IndicatorMap {
   return { d1: 0, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };
 }
 
+// Returns null when the key genuinely doesn't exist. Throws on transient
+// Redis failures so callers can distinguish "no history yet" from "we
+// couldn't tell" — silently treating the latter as the former is the bug
+// that masks degraded forecasts as cold-start.
 async function readKeyRaw(redis: RedisLike, key: string): Promise<string | null> {
-  try {
-    const value = await redis.get(key);
-    if (value === null || value === undefined) return null;
-    return typeof value === "string" ? value : JSON.stringify(value);
-  } catch (e: any) {
-    log(`Adaptive: Redis read failed for ${key}: ${e.message}`);
-    return null;
-  }
+  const value = await redis.get(key);
+  if (value === null || value === undefined) return null;
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
 
 async function writeKeyRaw(redis: RedisLike, key: string, value: string): Promise<void> {
@@ -137,24 +135,16 @@ export function rankAndAssignBonuses(
   group: IndicatorKey[],
   errors: IndicatorMap
 ): Record<string, number> {
+  // Strict 10/5/0 by sort position per spec §3.2 ("Winner→10, Middle→5, Loser→0").
+  // Ties are resolved by stable-sort order (input array order), keeping bonuses
+  // as integers so the rolling sum stays in the spec's stated 0–100 range.
   const sorted = [...group].sort((a, b) => errors[a] - errors[b]);
   const points = [10, 5, 0];
   const bonuses: Record<string, number> = {};
-  let i = 0;
-  while (i < sorted.length) {
-    let j = i;
-    while (j < sorted.length && errors[sorted[j]] === errors[sorted[i]]) j++;
-    const tiedPoints = points.slice(i, j);
-    const avg = tiedPoints.reduce((a, b) => a + b, 0) / tiedPoints.length;
-    for (let k = i; k < j; k++) bonuses[sorted[k]] = avg;
-    i = j;
-  }
+  sorted.forEach((k, i) => {
+    bonuses[k] = points[i];
+  });
   return bonuses;
-}
-
-export function isZeroInformationDay(actualChangePct: number, preds: IndicatorMap): boolean {
-  if (Math.abs(actualChangePct) > ZERO_INFO_EPSILON) return false;
-  return (Object.values(preds) as number[]).every((p) => Math.abs(p) < ZERO_INFO_EPSILON);
 }
 
 export function computeCumulativeBonuses(state: AdaptiveState): IndicatorMap {
@@ -228,13 +218,12 @@ function emitDailySummary(
  */
 export async function updateDailyBonuses(
   redis: RedisLike,
-  today: string,
   todayActualPrice: number,
   yesterdayBlob: YesterdayBlob | null,
-  // Spec wants the actual gold change in the same close-to-close window as
-  // the indicators. When the caller can supply that (e.g. from Yahoo GC=F),
-  // pass it here. Otherwise we fall back to spot-to-spot from kitco prices,
-  // which is dimensionally consistent for tests and the local-dev pipeline.
+  // Spec §5 wants the actual gold change in the same close-to-close window
+  // as the indicators. When the caller can supply that (e.g. from Yahoo GLD,
+  // explicitly named in the spec), pass it here. Otherwise we fall back to
+  // spot-to-spot from kitco prices.
   actualChangePctOverride?: number
 ): Promise<void> {
   if (!yesterdayBlob) {
@@ -291,13 +280,6 @@ export async function updateDailyBonuses(
     typeof actualChangePctOverride === "number" && isFinite(actualChangePctOverride)
       ? actualChangePctOverride
       : ((todayActualPrice - yesterdayActual) / yesterdayActual) * 100;
-
-  if (isZeroInformationDay(actualChangePct, preds)) {
-    log(
-      `Adaptive: zero-information day (actual ${actualChangePct.toFixed(4)}%, all preds ~0) — skipping bonus update`
-    );
-    return;
-  }
 
   const errors: IndicatorMap = emptyMap();
   for (const k of ALL_KEYS) {

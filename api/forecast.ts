@@ -4,10 +4,13 @@
  * Triggered daily by Vercel Cron at 10:00 AM Toronto time (14:00 UTC).
  * Runs the full 10-action pipeline with Upstash Redis for persistence.
  *
- * Stage 2: Added three inversely correlated indices (I1, I2, I3).
- * New forecast = avg(C1, C2, C3, -I1, -I2, -I3) / 6
+ * Forecast is the adaptive-weighted average of six indicators (3 direct +
+ * 3 reversal), where each weight is `100 + cumulative_bonus_i` over the
+ * rolling 10-day accuracy window. See ADAPTIVE_WEIGHTING_PLAN.md and the
+ * upgrade spec at agentone/docs/Prompt_for_Upgrading_AI_Agent_v3.docx.
  */
 
+import { timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Redis } from "@upstash/redis";
 import {
@@ -82,7 +85,17 @@ async function appendCsvRow(
     const parts = lines[idx].split(",");
     const mergedActual   = actual   !== null ? actual.toFixed(2)   : (parts[1] || "");
     const mergedForecast = forecast !== null ? forecast.toFixed(2) : (parts[2] || "");
-    const mergedDev      = deviation !== null ? deviation.toFixed(2) : (parts[3] || "");
+    let   mergedDev      = deviation !== null ? deviation.toFixed(2) : (parts[3] || "");
+    // If a prior run wrote actual without a forecast (first-run path) and a
+    // later same-day run now has a forecast, recompute deviation from the
+    // merged values so the row isn't permanently stuck with "" deviation.
+    if (!mergedDev && mergedActual && mergedForecast) {
+      const a = parseFloat(mergedActual);
+      const f = parseFloat(mergedForecast);
+      if (Number.isFinite(a) && Number.isFinite(f)) {
+        mergedDev = (a - f).toFixed(2);
+      }
+    }
     lines[idx] = [date, mergedActual, mergedForecast, mergedDev].join(",");
   } else {
     const row = [
@@ -178,6 +191,11 @@ async function loadYesterdayForecast(): Promise<number | null> {
 // ─── Pipeline (Vercel version) ──────────────────────────────────────────────
 
 async function runVercelPipeline(): Promise<void> {
+  // Pipeline ordering implements upgrade spec §3.1's allowed alternative:
+  // "the main 10:00 AM run can first load the previous day's actual data
+  // and update bonuses, then generate the new prediction." So today's
+  // adaptive weights include yesterday's freshly-scored bonuses, matching
+  // §3.3's `cumulative_bonus = sum(daily_bonus[t-9 ... t])` semantics.
   const today = torontoDateStr();
   log(`=== Gold Forecast Daily — ${today} ===`);
 
@@ -222,24 +240,25 @@ async function runVercelPipeline(): Promise<void> {
   try {
     if (actualGoldPrice !== null) {
       log("Adaptive: updating daily bonuses from yesterday's predictions...");
-      // Per spec: score against the same close-to-close window the indicators
-      // use. Pull GC=F from Yahoo for the actual change %; if it fails, the
-      // adaptive module falls back to spot-to-spot from the kitco price.
+      // Spec §5: "use a reliable API (e.g., Kitco, GoldAPI, or Yahoo Finance
+      // for GLD ETF). Ensure consistency: use the same price reference."
+      // GLD is named in the spec and is close-to-close like the other Yahoo
+      // indicators, so it satisfies both the source list and the consistency
+      // requirement. Falls back to spot-to-spot from kitco if Yahoo fails.
       let actualChangePctOverride: number | undefined;
       try {
-        const gc = await fetchYahooQuote("GC=F");
-        actualChangePctOverride = toPercent(gc.current, gc.prev);
+        const gld = await fetchYahooQuote("GLD");
+        actualChangePctOverride = toPercent(gld.current, gld.prev);
         log(
-          `Adaptive: GC=F close-to-close: ${gc.prev.toFixed(2)} → ${gc.current.toFixed(2)} (${actualChangePctOverride.toFixed(2)}%)`
+          `Adaptive: GLD close-to-close: ${gld.prev.toFixed(2)} → ${gld.current.toFixed(2)} (${actualChangePctOverride.toFixed(2)}%)`
         );
       } catch (e: any) {
         log(
-          `Adaptive: GC=F fetch failed (${e.message}) — falling back to kitco spot-to-spot`
+          `Adaptive: GLD fetch failed (${e.message}) — falling back to kitco spot-to-spot`
         );
       }
       await updateDailyBonuses(
         redis,
-        today,
         actualGoldPrice,
         yesterdayBlob,
         actualChangePctOverride
@@ -421,19 +440,27 @@ async function runVercelPipeline(): Promise<void> {
     log(`Action 9: Dollar forecast for tomorrow: $${dollarForecast.toFixed(2)}`);
   } catch (e: any) {
     log(`Action 9 ERROR: ${e.message}. Skipping table update.`);
-    await saveTodayForecast(today, todayForecast, {
-      article: articleText,
-      c1: parseFloat(coeff1.toFixed(2)),
-      c2: parseFloat(coeff2.toFixed(2)),
-      c3: parseFloat(coeff3.toFixed(2)),
-      i1: parseFloat(inv1.toFixed(2)),
-      i2: parseFloat(inv2.toFixed(2)),
-      i3: parseFloat(inv3.toFixed(2)),
-      ...(actualGoldPrice !== null
-        ? { actual_gold_price: parseFloat(actualGoldPrice.toFixed(2)) }
-        : {}),
-    });
-    log(`Action 9: Saved percentage forecast as fallback: ${todayForecast.toFixed(2)}`);
+    // Without a confirmed actual gold price we cannot convert today's percent
+    // forecast to a dollar amount. Saving the raw percent here would dimensionally
+    // poison tomorrow's deviation calc (the next run would treat 0.45 as $0.45).
+    // Better to skip the save: tomorrow's run will see no yesterday forecast and
+    // take the first-run path, keeping the CSV clean.
+    if (actualGoldPrice !== null) {
+      const dollarForecast = actualGoldPrice * (1 + todayForecast / 100);
+      await saveTodayForecast(today, dollarForecast, {
+        article: articleText,
+        c1: parseFloat(coeff1.toFixed(2)),
+        c2: parseFloat(coeff2.toFixed(2)),
+        c3: parseFloat(coeff3.toFixed(2)),
+        i1: parseFloat(inv1.toFixed(2)),
+        i2: parseFloat(inv2.toFixed(2)),
+        i3: parseFloat(inv3.toFixed(2)),
+        actual_gold_price: parseFloat(actualGoldPrice.toFixed(2)),
+      });
+      log(`Action 9: CSV write failed but actual price was available; saved $${dollarForecast.toFixed(2)} dollar forecast.`);
+    } else {
+      log(`Action 9: No actual gold price — skipping last_forecast.json write to avoid dimensional poisoning.`);
+    }
   }
 
   // Action 10: Deviation (log result)
@@ -459,10 +486,21 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  // Verify cron secret (Vercel sends this header for cron invocations)
-  const authHeader = req.headers["authorization"];
+  // Verify cron secret. Default-deny: if CRON_SECRET is unset in this
+  // environment we refuse the request rather than allowing public traffic
+  // to drive the (Groq-billed, state-mutating) pipeline.
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret) {
+    res.status(500).json({ error: "Server misconfigured: CRON_SECRET not set" });
+    return;
+  }
+  const authHeader = req.headers["authorization"] ?? "";
+  const expected = `Bearer ${cronSecret}`;
+  // Constant-time compare to avoid leaking secret length via response timing.
+  const a = Buffer.from(authHeader);
+  const b = Buffer.from(expected);
+  const valid = a.length === b.length && timingSafeEqual(a, b);
+  if (!valid) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
