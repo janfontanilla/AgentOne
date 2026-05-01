@@ -138,8 +138,8 @@ agentone/
 ├── gold_forecast_agent.ts # Shared agent helpers (Yahoo, kitco, Groq, CSV, time)
 ├── public/
 │   └── index.html         # Single-page dashboard, no build step
-├── test_gold_forecast.ts  # 82 unit + structural tests
-├── test_adaptive.ts       # Adaptive-module unit tests
+├── test_gold_forecast.ts  # Pipeline unit + structural tests
+├── test_adaptive.ts       # Adaptive-module unit tests (run as part of `npm test`)
 ├── docs/                  # Supervisor materials + this file
 ├── data/                  # Local-dev only: CSV + last_forecast.json mirror
 ├── package.json           # npm scripts and deps
@@ -152,17 +152,11 @@ agentone/
 
 | File | What |
 |---|---|
-| `README.md` | Public-facing project description. Quick start, dashboard URL. |
-| `CLAUDE.md` | Conventions for Claude Code sessions. Pipeline summary in 1 page. |
-| `PLANNING.md` | Architecture decisions log + PDF discrepancies + open questions. |
-| `CONVENTIONS.md` | Coding standards (camelCase, strict TS, error handling). |
-| `PROGRESS.md` | Phase-by-phase build log. The "what's been done" timeline. |
-| `CHANGELOG.md` | User-visible change log (less detailed than git history). |
-| `AGENTS.md` | Notes for AI coding agents (Claude Code, Codex, etc.). |
-| `ADAPTIVE_WEIGHTING_PLAN.md` | Design doc for Stage 3 before it was built. |
-| `REVIEW.md` | Code review notes / known issues / TODOs. |
-| `SESSION_HANDOFF.md` | Per-session continuity notes (frequently rewritten). |
-| `TASKS.md` | Granular TODO list. |
+| `README.md` | Public-facing project description. Quick start, dashboard URL, pipeline overview. |
+| `docs/ONBOARDING.md` | This file. Day-one read for a new team member. |
+| `PLANNING.md` | Architecture decisions log, Stage roadmap, PDF discrepancies, AWS migration state. |
+
+The project deliberately keeps to these three docs. Anything else (per-session notes, scratch TODOs, granular review notes) lives in git history, GitHub Issues, or PR descriptions — not in the repo's doc tree.
 
 **Files you should not check in:**
 - `.env` (secrets)
@@ -196,11 +190,14 @@ npm install
 # Run the full pipeline once (writes to local data/ AND to Upstash if creds are set)
 npx tsx gold_forecast_agent.ts
 
-# Run tests (82 fast tests, ~500ms)
+# Run tests (113 fast tests, ~600ms — typecheck + unit + adaptive)
 npm test
 
-# Run the long integration test suite (92 total, ~13s — hits real APIs)
+# Run the long integration test suite (123 total, ~11s — hits real APIs)
 npm run test:long
+
+# Just the typecheck (catches ESM resolution bugs that bundler-mode masks)
+npm run typecheck
 ```
 
 **Reading state without running the pipeline:**
@@ -320,10 +317,10 @@ The PDF says "Newmont (NEW)" on page 1 and "Newmont Corp (NEM)" on page 2. The c
 
 ### Other inherited issues
 
-See `REVIEW.md` for a fuller list. Highlights:
-- A few `try/catch` blocks log a warning but swallow the actual error type (low priority cleanup)
-- `torontoNow()` returns system local time, not strictly Toronto — only affects log timestamps, not forecasts
-- The pipeline's function name still says `runVercelPipeline()` — rename during AWS cleanup pass
+Low-priority cleanup items worth knowing about:
+- A few `try/catch` blocks log a warning but swallow the actual error type.
+- `torontoNow()` returns system local time, not strictly Toronto — only affects log timestamps, not forecasts.
+- The pipeline's function name still says `runVercelPipeline()` — rename during the AWS cleanup pass.
 
 ---
 
@@ -396,8 +393,9 @@ See `REVIEW.md` for a fuller list. Highlights:
 npx tsx gold_forecast_agent.ts
 
 # Run tests
-npm test                                # 82 fast
-npm run test:long                       # 92 with integration
+npm test                                # 113 fast (typecheck + unit + adaptive)
+npm run test:long                       # 123 with integration tests
+npm run typecheck                       # just the strict TS pass
 
 # Hit the live history endpoint
 curl https://agentone-theta.vercel.app/api/history | jq .

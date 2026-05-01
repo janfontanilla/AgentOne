@@ -34,3 +34,16 @@ graphify-out/
 docs/*
 # but track team-authored docs
 !docs/ONBOARDING.md
+
+# Local-only project docs. Canonical docs in the repo are limited to
+# README.md, PLANNING.md, and docs/ONBOARDING.md. The files below are kept
+# on disk for personal history but are no longer pushed to GitHub.
+/AGENTS.md
+/CHANGELOG.md
+/CLAUDE.md
+/CONVENTIONS.md
+/PROGRESS.md
+/REVIEW.md
+/SESSION_HANDOFF.md
+/TASKS.md
+/ADAPTIVE_WEIGHTING_PLAN.md

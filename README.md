@@ -514,11 +514,13 @@ npm run test:long
 
 ```
 AgentOne/
-├── gold_forecast_agent.ts       # Main agent — 7-action pipeline (~550 lines)
-├── test_gold_forecast.ts        # Test suite (81 tests)
+├── gold_forecast_agent.ts       # Local-dev runner + shared helpers (Yahoo, kitco, Groq, CSV, time)
+├── test_gold_forecast.ts        # Pipeline unit + structural tests
+├── test_adaptive.ts             # Adaptive-weighting unit tests (rank, cum bonuses, forecast)
 ├── api/
-│   ├── forecast.ts              # Vercel cron endpoint (runs pipeline daily)
-│   └── history.ts               # API route (returns JSON data for dashboard)
+│   ├── forecast.ts              # Vercel cron handler — full 10-action production pipeline
+│   ├── adaptive.ts              # Stage 3 self-learning module (10/5/0 ranking, weights)
+│   └── history.ts               # Read-only JSON endpoint that powers the dashboard
 ├── public/
 │   └── index.html               # Live dashboard (chart, table, per-day analysis)
 ├── vercel.json                  # Cron schedule: 0 14 * * * (10 AM Toronto)
@@ -548,8 +550,8 @@ AgentOne/
 | Llama 3.3 70B | LLM for news synthesis (25-word article from 20 sources) |
 | Yahoo Finance HTTP API | Stock prices (NEM, GOLD), forex (AUDUSD=X), ETF (SLV), gold futures (GC=F) |
 | kitco.com | Primary gold spot price source (USD per troy ounce) |
-| Vercel | Cloud deployment with serverless functions and cron scheduling |
-| Vercel Blob | Cloud persistence for CSV and JSON data between runs |
+| Vercel | Cloud deployment with serverless functions and cron scheduling (Stage 4 will migrate to AWS Lambda + EventBridge + S3/CloudFront) |
+| Upstash Redis | Cloud persistence for CSV history, last-forecast blob, adaptive state, and accuracy audit log |
 | Chart.js 4 | Actual vs Predicted line chart on dashboard (loaded via CDN) |
 | CSV + JSON | Data formats for forecast history and pipeline state |
 
@@ -562,8 +564,9 @@ AgentOne/
 | Variable | Required | Where | Description |
 |----------|----------|-------|-------------|
 | `GROQ_API_KEY` | Yes | Local + Vercel | API key for Groq cloud inference ([get one free](https://console.groq.com/)) |
-| `BLOB_READ_WRITE_TOKEN` | Vercel only | Vercel | Auto-created when adding Vercel Blob store |
-| `CRON_SECRET` | Optional | Vercel | Secures the `/api/forecast` cron endpoint |
+| `UPSTASH_REDIS_REST_URL` | Vercel + AWS | Vercel/AWS | Upstash Redis REST endpoint URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Vercel + AWS | Vercel/AWS | Upstash Redis REST auth token |
+| `CRON_SECRET` | Required | Vercel | Bearer token the cron handler verifies (default-deny if unset) |
 
 ### Configuration Files
 
@@ -572,8 +575,24 @@ AgentOne/
 | `.env` | Local environment variables (not committed) |
 | `.env.example` | Template showing required variables |
 | `vercel.json` | Vercel cron schedule and serverless function config |
-| `tsconfig.json` | TypeScript: strict mode, ES2022 target, ESNext modules |
+| `tsconfig.json` | TypeScript: strict mode, ES2022 target, NodeNext modules, `noEmit` (run via tsx) |
 | `package.json` | Type: module, dependencies, npm scripts for run/test |
+
+---
+
+---
+
+## Documentation
+
+The project keeps three canonical docs. Start here based on what you need:
+
+| If you want to... | Read |
+|---|---|
+| Run the agent locally or understand what it does | [README.md](README.md) (this file) |
+| Onboard onto the team and start contributing | [docs/ONBOARDING.md](docs/ONBOARDING.md) |
+| Understand *why* the agent is shaped the way it is — design decisions, stage roadmap, PDF discrepancies, AWS migration state | [PLANNING.md](PLANNING.md) |
+
+Supervisor source materials (in `docs/`): `Gold_Forecast_Spec_v1.pdf`, `Prompt_for_Upgrading_AI_Agent_v3.docx`, `AI_Michel_Project_v1.pdf`, `Server_Hosting_Meeting_Notes.docx`.
 
 ---
 
