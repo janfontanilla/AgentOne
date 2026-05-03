@@ -257,7 +257,7 @@ async function fetchAlphaVantageNews(): Promise<string> {
 
   try {
     const resp = await fetch(
-      `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=GLD,GC%3DF&topics=financial_markets&sort=LATEST&limit=20&apikey=${encodeURIComponent(avKey)}`
+      `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=GLD,GOLD&topics=financial_markets&sort=LATEST&limit=20&apikey=${encodeURIComponent(avKey)}`
     );
     if (!resp.ok) {
       log(`Action 1: Alpha Vantage API returned ${resp.status}`);
