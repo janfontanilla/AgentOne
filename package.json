@@ -7,15 +7,19 @@
     "start": "npx tsx gold_forecast_agent.ts",
     "typecheck": "npx tsc --noEmit",
     "test": "npm run typecheck && npx tsx --test test_gold_forecast.ts test_adaptive.ts",
-    "test:long": "npm run typecheck && RUN_LONG_TESTS=1 npx tsx --test test_gold_forecast.ts test_adaptive.ts"
+    "test:long": "npm run typecheck && RUN_LONG_TESTS=1 npx tsx --test test_gold_forecast.ts test_adaptive.ts",
+    "build": "node esbuild.config.mjs",
+    "deploy": "npm run build && sam deploy --stack-name goldforecast-stack --region us-east-1 --capabilities CAPABILITY_NAMED_IAM --no-confirm-changeset --resolve-s3"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@types/aws-lambda": "^8.10.161",
     "@types/node": "^25.5.0",
-    "@vercel/node": "^5.0.0"
+    "@vercel/node": "^5.0.0",
+    "esbuild": "^0.28.0"
   },
   "dependencies": {
     "@upstash/redis": "^1.37.0"

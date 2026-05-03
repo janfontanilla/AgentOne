@@ -12,6 +12,11 @@ node_modules/
 # Vercel
 .vercel/
 
+# AWS / SAM build artifacts
+dist/
+.aws-sam/
+samconfig.toml
+
 # OS
 .DS_Store
 Thumbs.db

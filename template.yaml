@@ -1,0 +1,204 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Gold Forecast Agent — AWS Migration v2 (Lambda + EventBridge Scheduler + S3/CloudFront)
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures:
+      - x86_64
+
+Resources:
+
+  # ─── Lambda: Forecast Cron ─────────────────────────────────────────────────
+  ForecastCronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: goldforecast-forecast-cron
+      CodeUri: dist/
+      Handler: forecast-handler.handler
+      Timeout: 270
+      MemorySize: 512
+      Environment:
+        Variables:
+          UPSTASH_REDIS_REST_URL: '{{resolve:ssm-secure:/gold-forecast/upstash-url:1}}'
+          UPSTASH_REDIS_REST_TOKEN: '{{resolve:ssm-secure:/gold-forecast/upstash-token:1}}'
+          GROQ_API_KEY: '{{resolve:ssm-secure:/gold-forecast/groq-api-key:1}}'
+          ALPHA_VANTAGE_KEY: '{{resolve:ssm-secure:/gold-forecast/alpha-vantage-key:1}}'
+          CRON_SECRET: '{{resolve:ssm-secure:/gold-forecast/cron-secret:1}}'
+
+  ForecastCronLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/goldforecast-forecast-cron
+      RetentionInDays: 30
+
+  # ─── EventBridge Scheduler (DST-aware via TimeZone parameter) ──────────────
+  # Why Scheduler vs Rules: Scheduler supports ScheduleExpressionTimezone
+  # so 10 AM Toronto stays 10 AM Toronto across DST changes.
+  ForecastSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-forecast-lambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt ForecastCronFunction.Arn
+
+  ForecastSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: goldforecast-daily-cron
+      Description: Daily forecast at 10 AM Toronto time (DST-aware)
+      ScheduleExpression: "cron(0 10 * * ? *)"
+      ScheduleExpressionTimezone: "America/Toronto"
+      State: ENABLED
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: !GetAtt ForecastCronFunction.Arn
+        RoleArn: !GetAtt ForecastSchedulerRole.Arn
+
+  # ─── Lambda: History API ───────────────────────────────────────────────────
+  HistoryApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: goldforecast-history-api
+      CodeUri: dist/
+      Handler: history-handler.handler
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          UPSTASH_REDIS_REST_URL: '{{resolve:ssm-secure:/gold-forecast/upstash-url:1}}'
+          UPSTASH_REDIS_REST_TOKEN: '{{resolve:ssm-secure:/gold-forecast/upstash-token:1}}'
+      Events:
+        GetHistory:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HistoryApi
+            Method: GET
+            Path: /api/history
+
+  HistoryApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/goldforecast-history-api
+      RetentionInDays: 30
+
+  # ─── API Gateway HTTP API v2 ───────────────────────────────────────────────
+  HistoryApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: "$default"
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: ["GET", "OPTIONS"]
+        AllowHeaders: ["Content-Type"]
+
+  # ─── S3 Bucket for Static Site ─────────────────────────────────────────────
+  DashboardBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "goldforecast-dashboard-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  DashboardOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: GoldForecastDashboardOAC
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  DashboardBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DashboardBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${DashboardBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DashboardDistribution}"
+
+  # ─── CloudFront (with CORRECT AWS-managed CachePolicyIds) ──────────────────
+  DashboardDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100  # US/EU edges only — cheapest
+        Origins:
+          - Id: S3Origin
+            DomainName: !GetAtt DashboardBucket.RegionalDomainName
+            S3OriginConfig: {}
+            OriginAccessControlId: !GetAtt DashboardOAC.Id
+          - Id: ApiGatewayOrigin
+            DomainName: !Sub "${HistoryApi}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig:
+              HTTPSPort: 443
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols:
+                - TLSv1.2
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          # CachingOptimized — for static index.html
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          Compress: true
+        CacheBehaviors:
+          - PathPattern: "/api/*"
+            TargetOriginId: ApiGatewayOrigin
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS]
+            # CachingDisabled — live data, no cache
+            CachePolicyId: 4135ea3d-6df7-44a4-9bb4-1b042a830a37
+            # AllViewer origin request policy
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            Compress: true
+
+Outputs:
+  ForecastCronFunctionArn:
+    Description: ARN of the forecast-cron Lambda function
+    Value: !GetAtt ForecastCronFunction.Arn
+
+  HistoryApiUrl:
+    Description: API Gateway URL for /api/history
+    Value: !Sub "https://${HistoryApi}.execute-api.${AWS::Region}.amazonaws.com/api/history"
+
+  CloudFrontUrl:
+    Description: CloudFront distribution URL (use this for the dashboard)
+    Value: !Sub "https://${DashboardDistribution.DomainName}"
+
+  DashboardBucketName:
+    Description: S3 bucket name for static site uploads
+    Value: !Ref DashboardBucket
+
+  ForecastSchedulerRoleArn:
+    Description: IAM role ARN for EventBridge Scheduler (used by test schedules)
+    Value: !GetAtt ForecastSchedulerRole.Arn

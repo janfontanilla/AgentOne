@@ -563,7 +563,7 @@ describe("PDF spec compliance — source code", () => {
   const source = fs.readFileSync(path.join(SCRIPT_DIR, "gold_forecast_agent.ts"), "utf-8");
 
   it("uses Alpha Vantage API for gold news (Action 1)", () => {
-    assert.ok(source.includes("alphavantage") && source.includes("GLD,GC"));
+    assert.ok(source.includes("alphavantage") && source.includes("GLD,GOLD"));
   });
 
   it("uses NEM symbol, not NEW (PDF typo on page 1)", () => {

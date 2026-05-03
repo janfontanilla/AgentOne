@@ -153,13 +153,38 @@ function appendCsvRow(
   deviation: number | null
 ): void {
   ensureCsv();
-  const row = [
-    date,
-    actual !== null ? actual.toFixed(2) : "",
-    forecast !== null ? forecast.toFixed(2) : "",
-    deviation !== null ? deviation.toFixed(2) : "",
-  ].join(",");
-  fs.appendFileSync(CSV_PATH, row + "\n", "utf-8");
+  const content = fs.readFileSync(CSV_PATH, "utf-8").trimEnd();
+  const lines = content.split("\n");
+  const idx = lines.findIndex((l, i) => i > 0 && l.trim().startsWith(date + ","));
+
+  if (idx >= 0) {
+    // Row exists — merge fields (only overwrite if new value is non-null)
+    const parts = lines[idx].split(",");
+    const mergedActual   = actual   !== null ? actual.toFixed(2)   : (parts[1] || "");
+    const mergedForecast = forecast !== null ? forecast.toFixed(2) : (parts[2] || "");
+    let   mergedDev      = deviation !== null ? deviation.toFixed(2) : (parts[3] || "");
+    // If prior run wrote actual without forecast (first-run) and later run has forecast,
+    // recompute deviation so row isn't stuck with "" deviation.
+    if (!mergedDev && mergedActual && mergedForecast) {
+      const a = parseFloat(mergedActual);
+      const f = parseFloat(mergedForecast);
+      if (Number.isFinite(a) && Number.isFinite(f)) {
+        mergedDev = (a - f).toFixed(2);
+      }
+    }
+    lines[idx] = [date, mergedActual, mergedForecast, mergedDev].join(",");
+  } else {
+    const row = [
+      date,
+      actual   !== null ? actual.toFixed(2)   : "",
+      forecast !== null ? forecast.toFixed(2) : "",
+      deviation !== null ? deviation.toFixed(2) : "",
+    ].join(",");
+    lines.push(row);
+  }
+
+  const updated = lines.join("\n") + "\n";
+  fs.writeFileSync(CSV_PATH, updated, "utf-8");
 }
 
 function updateLastRowDeviation(deviation: number): void {

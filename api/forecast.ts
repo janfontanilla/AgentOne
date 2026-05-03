@@ -189,9 +189,13 @@ async function loadYesterdayForecast(): Promise<number | null> {
   return null;
 }
 
-// ─── Pipeline (Vercel version) ──────────────────────────────────────────────
+// ─── Pipeline (shared by Vercel handler + AWS Lambda) ──────────────────────
+//
+// Exported as `runPipeline` so AWS Lambda's forecast-handler.ts can invoke
+// the pipeline directly without wrapping a Vercel-style request/response.
+// The Vercel handler below also calls this function.
 
-async function runVercelPipeline(): Promise<void> {
+export async function runPipeline(): Promise<void> {
   // Pipeline ordering implements upgrade spec §3.1's allowed alternative:
   // "the main 10:00 AM run can first load the previous day's actual data
   // and update bonuses, then generate the new prediction." So today's
@@ -509,7 +513,7 @@ export default async function handler(
   logs.length = 0; // Clear logs from previous runs
 
   try {
-    await runVercelPipeline();
+    await runPipeline();
     res.status(200).json({
       status: "success",
       timestamp: torontoNow(),
