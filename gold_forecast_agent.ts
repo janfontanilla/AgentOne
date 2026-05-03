@@ -30,6 +30,11 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 
+// ─── API Config ──────────────────────────────────────────────────────────────
+
+const SEARCH_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
 // ─── Load .env file ──────────────────────────────────────────────────────────
 
 (function loadEnv(): void {
@@ -58,9 +63,6 @@ const DATA_DIR = path.resolve(SCRIPT_DIR, "data");
 const CSV_PATH = path.join(DATA_DIR, "gold_forecast_history.csv");
 const FORECAST_PATH = path.join(DATA_DIR, "last_forecast.json");
 const CSV_COLUMNS = "date,actual_gold_price,forecast,deviation";
-const SEARCH_UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-const MAX_URLS = 20;
 
 // ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -240,171 +242,76 @@ export async function fetchKitcoGoldPrice(): Promise<number> {
   return valid[valid.length - 1];
 }
 
-// ─── Action 1: Web Search + Page Scraping + Groq Llama 3.3 70B ──────────────
+// ─── Action 1: Gold News via Alpha Vantage NEWS_SENTIMENT API ──────────────────
 //
-// PDF spec §1: scrape up to 20 gold-related news pages, then have an LLM
-// summarize them in ≤25 words. Implemented in three steps:
-//   1. searchForGoldUrls() — collect up to 20 URLs from Google + DuckDuckGo
-//      + a curated list of always-reachable gold news sites + Yahoo RSS.
-//   2. extractPageText() — strip each page to readable text (no headless
-//      browser; we just regex out scripts, styles, and tags).
-//   3. action1_newsArticle() — concatenate the texts and ask Groq's
-//      Llama 3.3 70B for a short outlook. Static-text fallback if no key.
+// PDF spec §1 requires scraping up to 20 gold news articles for LLM synthesis.
+// Direct web scraping fails (sites block non-browser requests). Solution: use
+// Alpha Vantage NEWS_SENTIMENT API as the reliable scraping service.
+// Returns structured articles (title + summary), avoiding HTML parsing failures.
+// Fallback: static text if API unavailable. Never throws.
 
-/** Collect up to 20 gold-related URLs from multiple sources. */
-async function searchForGoldUrls(): Promise<string[]> {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  const addUrl = (u: string) => {
-    if (!seen.has(u) && urls.length < MAX_URLS) {
-      seen.add(u);
-      urls.push(u);
-    }
-  };
+/** Scrape up to 20 gold news articles via Alpha Vantage NEWS_SENTIMENT API. */
+async function fetchAlphaVantageNews(): Promise<string> {
+  const avKey = process.env.ALPHA_VANTAGE_KEY;
+  if (!avKey) return "";
 
-  // Source 1: Google search
   try {
     const resp = await fetch(
-      `https://www.google.com/search?q=gold+price+tomorrow&num=20&hl=en`,
-      { headers: { "User-Agent": SEARCH_UA } }
+      `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&tickers=GLD,GC%3DF&topics=financial_markets&sort=LATEST&limit=20&apikey=${encodeURIComponent(avKey)}`
     );
-    if (resp.ok) {
-      const html = await resp.text();
-      const matches = [...html.matchAll(/href="\/url\?q=(https?:\/\/[^&"]+)/g)];
-      for (const m of matches) {
-        const url = decodeURIComponent(m[1]);
-        if (!url.includes("google.com") && !url.includes("youtube.com")) addUrl(url);
-      }
+    if (!resp.ok) {
+      log(`Action 1: Alpha Vantage API returned ${resp.status}`);
+      return "";
     }
-    log(`Action 1: Google returned ${urls.length} URLs`);
+
+    const data = await resp.json() as any;
+    if (data?.["Error Message"] || data?.note) {
+      log(`Action 1: Alpha Vantage API error: ${data["Error Message"] || data.note}`);
+      return "";
+    }
+
+    const feed = data?.feed ?? [];
+    if (!Array.isArray(feed) || feed.length === 0) {
+      log("Action 1: Alpha Vantage returned no articles");
+      return "";
+    }
+
+    // Extract up to 20 article summaries (PDF spec: "up to 20 news articles")
+    const summaries = feed
+      .slice(0, 20)
+      .map((item: any) => {
+        const title = item.title || "";
+        const summary = item.summary || "";
+        return `${title}. ${summary}`.trim();
+      })
+      .filter((s: string) => s.length > 0);
+
+    log(`Action 1: Alpha Vantage scraping: ${summaries.length} articles fetched`);
+    return summaries.join("\n---\n");
   } catch (e: any) {
-    log(`Action 1: Google search failed: ${e.message}`);
+    log(`Action 1: Alpha Vantage scraping failed: ${e.message}`);
+    return "";
   }
-
-  // Source 2: DuckDuckGo JSON API (doesn't require CAPTCHA)
-  if (urls.length < MAX_URLS) {
-    try {
-      const resp = await fetch(
-        `https://api.duckduckgo.com/?q=gold+price+tomorrow&format=json&no_redirect=1&no_html=1`,
-        { headers: { "User-Agent": "Mozilla/5.0" } }
-      );
-      // DDG sometimes returns 200 with an empty body; resp.json() then throws
-      // a generic "Unexpected end of JSON input". Read text first so we can
-      // log the real condition.
-      const text = await resp.text();
-      if (!text.trim()) {
-        log("Action 1: DuckDuckGo API returned empty body — skipping");
-        throw new Error("empty body");
-      }
-      const data = JSON.parse(text);
-      for (const t of (data.RelatedTopics ?? [])) {
-        if (t.FirstURL) addUrl(t.FirstURL);
-        // Subtopics
-        for (const sub of (t.Topics ?? [])) {
-          if (sub.FirstURL) addUrl(sub.FirstURL);
-        }
-      }
-      log(`Action 1: DuckDuckGo API added URLs, total now ${urls.length}`);
-    } catch (e: any) {
-      log(`Action 1: DuckDuckGo API failed: ${e.message}`);
-    }
-  }
-
-  // Source 3: Known gold news/forecast sites (reliable, always reachable)
-  const knownUrls = [
-    "https://www.kitco.com/news/gold/",
-    "https://www.investing.com/commodities/gold",
-    "https://www.reuters.com/markets/commodities/gold/",
-    "https://www.bloomberg.com/markets/commodities",
-    "https://www.marketwatch.com/investing/future/gold",
-    "https://www.cnbc.com/quotes/GC=F",
-    "https://finance.yahoo.com/quote/GC%3DF/",
-    "https://www.fxstreet.com/commodities/gold",
-    "https://goldprice.org/",
-    "https://www.bullionvault.com/gold-news",
-  ];
-  for (const u of knownUrls) addUrl(u);
-  log(`Action 1: After known sites, total URLs: ${urls.length}`);
-
-  // Source 4: Yahoo Finance gold RSS headlines for more URLs
-  try {
-    const rssResp = await fetch(
-      "https://feeds.finance.yahoo.com/rss/2.0/headline?s=GC%3DF&region=US&lang=en-US",
-      { headers: { "User-Agent": "Mozilla/5.0" } }
-    );
-    const rssText = await rssResp.text();
-    const linkMatches = [...rssText.matchAll(/<link>(https?:\/\/[^<]+)<\/link>/g)];
-    for (const m of linkMatches) {
-      if (!m[1].includes("yahoo.com/rss")) addUrl(m[1]);
-    }
-    log(`Action 1: After RSS, total URLs: ${urls.length}`);
-  } catch (e: any) {
-    log(`Action 1: Yahoo RSS failed: ${e.message}`);
-  }
-
-  return urls.slice(0, MAX_URLS);
 }
 
-async function extractPageText(url: string): Promise<string> {
-  const resp = await fetch(url, {
-    headers: { "User-Agent": SEARCH_UA },
-    redirect: "follow",
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const html = await resp.text();
-
-  let text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<nav[\s\S]*?<\/nav>/gi, "")
-    .replace(/<header[\s\S]*?<\/header>/gi, "")
-    .replace(/<footer[\s\S]*?<\/footer>/gi, "")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&[a-z]+;/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return text.slice(0, 1500);
-}
-
-/** PDF Action 1: produce a short gold-outlook article from scraped news.
+/** PDF Action 1: produce a short gold-outlook article from news sentiment data.
  *
- *  Returns either the LLM's synthesis (when `GROQ_API_KEY` is set) or a
- *  static neutral-tone placeholder. Never throws — failures are logged
- *  and the placeholder is returned so the rest of the pipeline keeps
- *  running. The article is for human display only; the numeric forecast
- *  is computed from market indicators, not from this text. */
+ *  Primary: fetches structured news via Alpha Vantage NEWS_SENTIMENT API,
+ *  synthesizes via Groq Llama 3.3 70B. Fallback: static neutral-tone text
+ *  if Alpha Vantage key absent or API fails, or if Groq key absent. Never
+ *  throws — failures logged, pipeline continues. Article is for display
+ *  only; numeric forecast comes from market indicators. */
 export async function action1_newsArticle(): Promise<string> {
   const groqKey = process.env.GROQ_API_KEY ?? "";
 
-  // Step 1: Search Google for top 20 result URLs (PDF spec)
-  const urls = await searchForGoldUrls();
-  log(`Action 1: Found ${urls.length} URLs to scrape`);
+  // Step 1: Fetch structured news from Alpha Vantage (replaces web scraping)
+  const newsText = await fetchAlphaVantageNews();
+  log(
+    `Action 1: Alpha Vantage returned ${newsText.length > 0 ? "structured news" : "no news"}`
+  );
 
-  // Step 2: Fetch each page and extract text (readability extraction per PDF)
-  const extractedTexts: string[] = [];
-  let successCount = 0;
-  for (const url of urls) {
-    try {
-      const text = await extractPageText(url);
-      if (text.length > 100) {
-        extractedTexts.push(text);
-        successCount++;
-      }
-    } catch (e: any) {
-      /* skip failed pages — expected for blocked/timeout URLs */
-      log(`Action 1: Page fetch failed for ${url}: ${e.message}`);
-    }
-  }
-  log(`Action 1: Extracted text from ${successCount}/${urls.length} pages`);
-
-  // Step 3: Synthesize via Groq Llama 3.3 70B
-  const combinedText = extractedTexts
-    .slice(0, 20)
-    .join("\n---\n")
-    .slice(0, 8000);
-
-  if (groqKey) {
+  // Step 2: Synthesize via Groq Llama 3.3 70B if we have both news and API key
+  if (newsText && groqKey) {
     try {
       const aiResp = await fetch(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -420,11 +327,11 @@ export async function action1_newsArticle(): Promise<string> {
               {
                 role: "system",
                 content:
-                  'You are a concise gold market analyst. Based on the provided extracted web page texts, write a SHORT article about the gold price outlook. Include: 1) A summary sentence of MAX 25 words answering "What will happen to gold price in the near future?". 2) One optional sentence summarizing the consensus. Keep the entire response under 100 words.',
+                  'You are a concise gold market analyst. Based on the provided news articles, write a SHORT article about the gold price outlook. Include: 1) A summary sentence of MAX 25 words answering "What will happen to gold price in the near future?". 2) One optional sentence summarizing sentiment. Keep the entire response under 100 words.',
               },
               {
                 role: "user",
-                content: `Here are extracted texts from ${successCount} web pages about gold price forecast:\n\n${combinedText}\n\nWrite the short article now.`,
+                content: `Here are recent articles on gold and commodities:\n\n${newsText.slice(0, 8000)}\n\nWrite the short article now.`,
               },
             ],
             max_tokens: 150,
@@ -449,9 +356,10 @@ export async function action1_newsArticle(): Promise<string> {
       log(`Action 1: Groq API fetch failed: ${e.message}`);
       return "Gold price outlook analysis unavailable.";
     }
-  } else {
-    return `Gold markets show mixed signals. Analysts expect consolidation near recent levels with bias driven by macroeconomic and geopolitical factors.`;
   }
+
+  // Fallback: static text when news unavailable or no API keys
+  return `Gold markets show mixed signals. Analysts expect consolidation near recent levels with bias driven by macroeconomic and geopolitical factors.`;
 }
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────

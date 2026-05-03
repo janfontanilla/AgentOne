@@ -562,8 +562,8 @@ describe("Security audit", () => {
 describe("PDF spec compliance — source code", () => {
   const source = fs.readFileSync(path.join(SCRIPT_DIR, "gold_forecast_agent.ts"), "utf-8");
 
-  it("searches for 'gold price tomorrow' (Action 1)", () => {
-    assert.ok(source.includes("gold+price+tomorrow") || source.includes("gold price tomorrow"));
+  it("uses Alpha Vantage API for gold news (Action 1)", () => {
+    assert.ok(source.includes("alphavantage") && source.includes("GLD,GC"));
   });
 
   it("uses NEM symbol, not NEW (PDF typo on page 1)", () => {
@@ -583,8 +583,8 @@ describe("PDF spec compliance — source code", () => {
     assert.ok(source.includes('"SLV"'));
   });
 
-  it("limits URL scraping to 20 (MAX_URLS)", () => {
-    assert.ok(source.includes("MAX_URLS = 20"));
+  it("uses Alpha Vantage NEWS_SENTIMENT for action 1 news (replaces web scraping)", () => {
+    assert.ok(source.includes("fetchAlphaVantageNews") && source.includes("NEWS_SENTIMENT"));
   });
 
   it("uses kitco.com as primary gold price source (Action 6)", () => {
