@@ -26,6 +26,7 @@ Append-only. Newest first.
 
 | Date | Decision | Why | Alternatives considered |
 |---|---|---|---|
+| 2026-05-02 | **Replace Action 1 web scraping with Alpha Vantage NEWS_SENTIMENT API** | Direct scraping was broken: Google CAPTCHA-blocked, DuckDuckGo rate-limited, all 10 news sites returned 403/404/401. Only ~3/20 pages succeeded. Alpha Vantage provides reliable, structured article feed (20 articles, free tier 25/day limit). Same LLM synthesis, better data input. | Keep broken scraping (fails daily), paid scraping service (ScrapingBee/Brightdata), headless browser (Puppeteer, heavy) |
 | 2026-05-01 | Switch actual-gold reference to **GLD** (was GC=F) for adaptive scoring | Spec §5 names GLD explicitly; close-to-close consistent with other Yahoo indicators | Keep GC=F (consistency but unnamed in spec), use kitco spot (24/7, dimensionally inconsistent) |
 | 2026-05-01 | **Strict 10/5/0** ranking; ties resolved by sort stability | Spec §3.3 calls bonuses "an integer between 0 and 100"; fractional ties violated that | Fractional split (mathematically fair but extra-spec) |
 | 2026-05-01 | **Drop** zero-information-day skip | Spec only requires skipping when actual price is missing; the broader skip was extra-spec | Tighter epsilon (still extra-spec), keep as-is |
