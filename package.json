@@ -16,6 +16,7 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
+    "@aws-sdk/client-ssm": "^3.1041.0",
     "@types/aws-lambda": "^8.10.161",
     "@types/node": "^25.5.0",
     "@vercel/node": "^5.0.0",

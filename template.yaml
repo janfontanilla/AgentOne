@@ -11,6 +11,9 @@ Globals:
 Resources:
 
   # ─── Lambda: Forecast Cron ─────────────────────────────────────────────────
+  # Secrets are loaded from SSM at runtime (CloudFormation does not support
+  # {{resolve:ssm-secure}} for Lambda env vars). The IAM policy below grants
+  # ssm:GetParameters + kms:Decrypt for /gold-forecast/* parameters.
   ForecastCronFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -19,13 +22,17 @@ Resources:
       Handler: forecast-handler.handler
       Timeout: 270
       MemorySize: 512
-      Environment:
-        Variables:
-          UPSTASH_REDIS_REST_URL: '{{resolve:ssm-secure:/gold-forecast/upstash-url:1}}'
-          UPSTASH_REDIS_REST_TOKEN: '{{resolve:ssm-secure:/gold-forecast/upstash-token:1}}'
-          GROQ_API_KEY: '{{resolve:ssm-secure:/gold-forecast/groq-api-key:1}}'
-          ALPHA_VANTAGE_KEY: '{{resolve:ssm-secure:/gold-forecast/alpha-vantage-key:1}}'
-          CRON_SECRET: '{{resolve:ssm-secure:/gold-forecast/cron-secret:1}}'
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameters
+                - ssm:GetParameter
+              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gold-forecast/*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/alias/aws/ssm"
 
   ForecastCronLogGroup:
     Type: AWS::Logs::LogGroup
@@ -78,10 +85,17 @@ Resources:
       Handler: history-handler.handler
       Timeout: 30
       MemorySize: 256
-      Environment:
-        Variables:
-          UPSTASH_REDIS_REST_URL: '{{resolve:ssm-secure:/gold-forecast/upstash-url:1}}'
-          UPSTASH_REDIS_REST_TOKEN: '{{resolve:ssm-secure:/gold-forecast/upstash-token:1}}'
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameters
+                - ssm:GetParameter
+              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gold-forecast/*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/alias/aws/ssm"
       Events:
         GetHistory:
           Type: HttpApi
