@@ -120,27 +120,26 @@ Resources:
         AllowMethods: ["GET", "OPTIONS"]
         AllowHeaders: ["Content-Type"]
 
-  # ─── S3 Bucket for Static Site ─────────────────────────────────────────────
+  # ─── S3 Bucket for Static Site (public website hosting) ────────────────────
+  # Direct S3 website hosting — no CloudFront. Simpler and avoids the
+  # CachePolicy resolution issue. Dashboard fetches API Gateway URL directly.
   DashboardBucket:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Sub "goldforecast-dashboard-${AWS::AccountId}"
       VersioningConfiguration:
         Status: Enabled
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
       PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  DashboardOAC:
-    Type: AWS::CloudFront::OriginAccessControl
-    Properties:
-      OriginAccessControlConfig:
-        Name: GoldForecastDashboardOAC
-        OriginAccessControlOriginType: s3
-        SigningBehavior: always
-        SigningProtocol: sigv4
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
 
   DashboardBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -149,52 +148,9 @@ Resources:
       PolicyDocument:
         Statement:
           - Effect: Allow
-            Principal:
-              Service: cloudfront.amazonaws.com
+            Principal: "*"
             Action: s3:GetObject
             Resource: !Sub "${DashboardBucket.Arn}/*"
-            Condition:
-              StringEquals:
-                "AWS:SourceArn": !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DashboardDistribution}"
-
-  # ─── CloudFront (with CORRECT AWS-managed CachePolicyIds) ──────────────────
-  DashboardDistribution:
-    Type: AWS::CloudFront::Distribution
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        DefaultRootObject: index.html
-        HttpVersion: http2
-        PriceClass: PriceClass_100  # US/EU edges only — cheapest
-        Origins:
-          - Id: S3Origin
-            DomainName: !GetAtt DashboardBucket.RegionalDomainName
-            S3OriginConfig: {}
-            OriginAccessControlId: !GetAtt DashboardOAC.Id
-          - Id: ApiGatewayOrigin
-            DomainName: !Sub "${HistoryApi}.execute-api.${AWS::Region}.amazonaws.com"
-            CustomOriginConfig:
-              HTTPSPort: 443
-              OriginProtocolPolicy: https-only
-              OriginSSLProtocols:
-                - TLSv1.2
-        DefaultCacheBehavior:
-          TargetOriginId: S3Origin
-          ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods: [GET, HEAD, OPTIONS]
-          # CachingOptimized — for static index.html
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
-          Compress: true
-        CacheBehaviors:
-          - PathPattern: "/api/*"
-            TargetOriginId: ApiGatewayOrigin
-            ViewerProtocolPolicy: https-only
-            AllowedMethods: [GET, HEAD, OPTIONS]
-            # CachingDisabled — live data, no cache
-            CachePolicyId: 4135ea3d-6df7-44a4-9bb4-1b042a830a37
-            # AllViewer origin request policy
-            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
-            Compress: true
 
 Outputs:
   ForecastCronFunctionArn:
@@ -205,9 +161,9 @@ Outputs:
     Description: API Gateway URL for /api/history
     Value: !Sub "https://${HistoryApi}.execute-api.${AWS::Region}.amazonaws.com/api/history"
 
-  CloudFrontUrl:
-    Description: CloudFront distribution URL (use this for the dashboard)
-    Value: !Sub "https://${DashboardDistribution.DomainName}"
+  DashboardUrl:
+    Description: S3 static website URL (HTTP — for dashboard)
+    Value: !Sub "http://${DashboardBucket}.s3-website-${AWS::Region}.amazonaws.com"
 
   DashboardBucketName:
     Description: S3 bucket name for static site uploads
