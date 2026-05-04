@@ -2,11 +2,9 @@
  * AWS Lambda handler for the read-only history endpoint.
  *
  * Invoked by API Gateway HTTP API v2 on GET /api/history.
- * Calls getHistoryData() from api/history.ts and returns JSON with
- * CORS headers for the CloudFront-hosted dashboard.
  *
- * Secrets are loaded from SSM Parameter Store at Lambda init (cached per
- * container). Only Upstash credentials are needed for read-only access.
+ * Critical: DYNAMIC IMPORT for ../api/history.js so secrets are loaded
+ * into process.env BEFORE Redis.fromEnv() runs at module init.
  */
 
 import type {
@@ -14,20 +12,12 @@ import type {
   APIGatewayProxyResultV2,
 } from "aws-lambda";
 import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
-import { getHistoryData } from "../api/history.js";
-
-const CORS_HEADERS = {
-  "Content-Type": "application/json",
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
 
 const ssm = new SSMClient({ region: process.env.AWS_REGION || "us-east-1" });
-let secretsLoaded = false;
+let initialized = false;
 
-async function loadSecrets(): Promise<void> {
-  if (secretsLoaded) return;
+async function initialize(): Promise<void> {
+  if (initialized) return;
 
   const result = await ssm.send(new GetParametersCommand({
     Names: [
@@ -43,8 +33,15 @@ async function loadSecrets(): Promise<void> {
     else if (p.Name === "/gold-forecast/upstash-token") process.env.UPSTASH_REDIS_REST_TOKEN = p.Value;
   }
 
-  secretsLoaded = true;
+  initialized = true;
 }
+
+const CORS_HEADERS = {
+  "Content-Type": "application/json",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
 export const handler = async (
   event: APIGatewayProxyEventV2
@@ -52,7 +49,8 @@ export const handler = async (
   console.log("API request:", event.rawPath, event.requestContext.http.method);
 
   try {
-    await loadSecrets();
+    await initialize();
+    const { getHistoryData } = await import("../api/history.js");
     const data = await getHistoryData();
     return {
       statusCode: 200,

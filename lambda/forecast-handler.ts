@@ -2,23 +2,21 @@
  * AWS Lambda handler for the daily forecast cron.
  *
  * Invoked by EventBridge Scheduler at 10 AM Toronto time (DST-aware).
- * Calls runPipeline() from api/forecast.ts directly — no req/res wrapping.
  *
- * Secrets are loaded from SSM Parameter Store at Lambda init (cached per
- * container). CloudFormation does not support {{resolve:ssm-secure}} for
- * Lambda env vars, so we fetch them at runtime and inject into process.env.
+ * Critical: We use DYNAMIC IMPORT for ../api/forecast.js to ensure secrets
+ * are loaded into process.env BEFORE Redis.fromEnv() runs at module init.
+ * Static `import` would execute Redis.fromEnv() with empty env vars and
+ * break the pipeline with "Failed to parse URL" errors.
  */
 
 import type { ScheduledEvent } from "aws-lambda";
 import { SSMClient, GetParametersCommand } from "@aws-sdk/client-ssm";
-import { runPipeline } from "../api/forecast.js";
-import { logs } from "../gold_forecast_agent.js";
 
 const ssm = new SSMClient({ region: process.env.AWS_REGION || "us-east-1" });
-let secretsLoaded = false;
+let initialized = false;
 
-async function loadSecrets(): Promise<void> {
-  if (secretsLoaded) return;
+async function initialize(): Promise<void> {
+  if (initialized) return;
 
   const result = await ssm.send(new GetParametersCommand({
     Names: [
@@ -40,13 +38,20 @@ async function loadSecrets(): Promise<void> {
     else if (p.Name === "/gold-forecast/cron-secret") process.env.CRON_SECRET = p.Value;
   }
 
-  secretsLoaded = true;
+  initialized = true;
 }
 
 export const handler = async (event: ScheduledEvent) => {
   console.log("EventBridge trigger received at", event.time);
 
-  await loadSecrets();
+  await initialize();
+
+  // Dynamic import — runs AFTER process.env is populated, so Redis.fromEnv()
+  // sees the proper credentials. ESM caches the module, so subsequent
+  // invocations on the same Lambda container reuse this import (no re-fetch).
+  const { runPipeline } = await import("../api/forecast.js");
+  const { logs } = await import("../gold_forecast_agent.js");
+
   logs.length = 0;
 
   try {
