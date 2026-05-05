@@ -57,6 +57,9 @@ Resources:
               Action: kms:Decrypt
               Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/alias/aws/ssm"
             - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt StateBucket.Arn
+            - Effect: Allow
               Action:
                 - s3:GetObject
                 - s3:PutObject
@@ -114,6 +117,9 @@ Resources:
       Policies:
         - Version: "2012-10-17"
           Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt StateBucket.Arn
             - Effect: Allow
               Action: s3:GetObject
               Resource: !Sub "${StateBucket.Arn}/*"
