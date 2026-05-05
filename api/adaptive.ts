@@ -43,6 +43,11 @@ export interface YesterdayBlob {
   actual_gold_price?: number;
 }
 
+// Storage adapter — minimal get/set interface so this module is decoupled
+// from the underlying store. The pipeline currently injects an S3-backed
+// implementation (api/storage.ts → s3StorageClient). The same shape worked
+// for Upstash Redis previously — keep the name `RedisLike` for now since
+// the contract hasn't changed.
 interface RedisLike {
   get(key: string): Promise<unknown>;
   set(key: string, value: string): Promise<unknown>;

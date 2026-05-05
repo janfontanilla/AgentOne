@@ -12,28 +12,23 @@
  *                so the client can fall back to the equal-weight signal).
  * }
  *
- * Side-effect free: all reads are from Upstash Redis. No state is
- * written here; the daily cron in api/forecast.ts is the only writer.
+ * Side-effect free: all reads are from S3. No state is written here;
+ * the daily cron in api/forecast.ts is the only writer.
  */
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { Redis } from "@upstash/redis";
+import { readObject, s3StorageClient } from "./storage.js";
 import {
   loadAdaptiveState,
   computeCumulativeBonuses,
   type IndicatorMap,
 } from "./adaptive.js";
 
-const redis = Redis.fromEnv();
-
 const ALL_KEYS: (keyof IndicatorMap)[] = ["d1", "d2", "d3", "r1", "r2", "r3"];
 
 async function readKey(key: string): Promise<string | null> {
   try {
-    const value = await redis.get(key);
-    if (value === null || value === undefined) return null;
-    // Upstash auto-deserializes JSON — ensure we always return a string
-    return typeof value === "string" ? value : JSON.stringify(value);
+    return await readObject(key);
   } catch {
     return null;
   }
@@ -130,7 +125,7 @@ export async function getHistoryData(): Promise<HistoryResponse> {
     historyDays: number;
   } | null = null;
   try {
-    const state = await loadAdaptiveState(redis as any);
+    const state = await loadAdaptiveState(s3StorageClient);
     if (state.history.length > 0) {
       const cumBonuses = computeCumulativeBonuses(state);
       const weights: IndicatorMap = { d1: 0, d2: 0, d3: 0, r1: 0, r2: 0, r3: 0 };

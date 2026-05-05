@@ -1,8 +1,8 @@
 /**
- * Vercel Serverless Function — Gold Forecast Pipeline
+ * Gold Forecast Pipeline — runPipeline()
  *
- * Triggered daily by Vercel Cron at 10:00 AM Toronto time (14:00 UTC).
- * Runs the full 10-action pipeline with Upstash Redis for persistence.
+ * Triggered daily at 10:00 AM Toronto time by AWS EventBridge Scheduler
+ * (DST-aware). Runs the full 10-action pipeline with S3 for persistence.
  *
  * Forecast is the adaptive-weighted average of six indicators (3 direct +
  * 3 reversal), where each weight is `100 + cumulative_bonus_i` over the
@@ -13,7 +13,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { Redis } from "@upstash/redis";
+import { readObject, writeObject, s3StorageClient } from "./storage.js";
 import {
   log,
   logs,
@@ -37,32 +37,27 @@ import {
 const CSV_COLUMNS = "date,actual_gold_price,forecast,deviation";
 const MAX_ANALYSIS_HISTORY = 365;
 
-// ─── Upstash Redis Storage ─────────────────────────────────────────────────
-
-const redis = Redis.fromEnv();
+// ─── S3 Storage ────────────────────────────────────────────────────────────
 
 async function readKey(key: string): Promise<string | null> {
   try {
-    const value = await redis.get(key);
-    if (value === null || value === undefined) return null;
-    // Upstash auto-deserializes JSON — ensure we always return a string
-    return typeof value === "string" ? value : JSON.stringify(value);
+    return await readObject(key);
   } catch (e: any) {
-    log(`Redis read failed for ${key}: ${e.message}`);
+    log(`S3 read failed for ${key}: ${e.message}`);
     return null;
   }
 }
 
 async function writeKey(key: string, value: string): Promise<void> {
   try {
-    await redis.set(key, value);
+    await writeObject(key, value);
   } catch (e: any) {
-    log(`Redis write failed for ${key}: ${e.message}`);
+    log(`S3 write failed for ${key}: ${e.message}`);
     throw e;
   }
 }
 
-// ─── Storage Functions (Redis-backed) ──────────────────────────────────────
+// ─── Storage Functions (S3-backed) ─────────────────────────────────────────
 
 async function loadCsv(): Promise<string> {
   const content = await readKey("gold_forecast_history.csv");
@@ -222,7 +217,7 @@ export async function runPipeline(): Promise<void> {
   // adaptive block needs today's actual price.
   let yesterdayBlob: YesterdayBlob | null = null;
   try {
-    yesterdayBlob = await loadYesterdayBlob(redis);
+    yesterdayBlob = await loadYesterdayBlob(s3StorageClient);
   } catch (e: any) {
     log(`WARNING: Failed to load yesterday blob: ${e.message}`);
   }
@@ -263,7 +258,7 @@ export async function runPipeline(): Promise<void> {
         );
       }
       await updateDailyBonuses(
-        redis,
+        s3StorageClient,
         actualGoldPrice,
         yesterdayBlob,
         actualChangePctOverride
@@ -271,7 +266,7 @@ export async function runPipeline(): Promise<void> {
     } else {
       log("Adaptive: skipping bonus update (no actual gold price).");
     }
-    const state = await loadAdaptiveState(redis);
+    const state = await loadAdaptiveState(s3StorageClient);
     cumBonuses = computeCumulativeBonuses(state);
     log(
       `Adaptive: cum bonuses → D1=${cumBonuses.d1} D2=${cumBonuses.d2} D3=${cumBonuses.d3} | R1=${cumBonuses.r1} R2=${cumBonuses.r2} R3=${cumBonuses.r3}`

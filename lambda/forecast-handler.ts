@@ -3,10 +3,9 @@
  *
  * Invoked by EventBridge Scheduler at 10 AM Toronto time (DST-aware).
  *
- * Critical: We use DYNAMIC IMPORT for ../api/forecast.js to ensure secrets
- * are loaded into process.env BEFORE Redis.fromEnv() runs at module init.
- * Static `import` would execute Redis.fromEnv() with empty env vars and
- * break the pipeline with "Failed to parse URL" errors.
+ * Loads Groq + Alpha Vantage + Cron secrets from SSM into process.env at
+ * cold start. State storage is S3 (bucket name comes from STATE_BUCKET_NAME,
+ * set by SAM); the S3 client uses the Lambda's IAM role automatically.
  */
 
 import type { ScheduledEvent } from "aws-lambda";
@@ -20,8 +19,6 @@ async function initialize(): Promise<void> {
 
   const result = await ssm.send(new GetParametersCommand({
     Names: [
-      "/gold-forecast/upstash-url",
-      "/gold-forecast/upstash-token",
       "/gold-forecast/groq-api-key",
       "/gold-forecast/alpha-vantage-key",
       "/gold-forecast/cron-secret",
@@ -31,9 +28,7 @@ async function initialize(): Promise<void> {
 
   for (const p of result.Parameters ?? []) {
     if (!p.Name || !p.Value) continue;
-    if (p.Name === "/gold-forecast/upstash-url") process.env.UPSTASH_REDIS_REST_URL = p.Value;
-    else if (p.Name === "/gold-forecast/upstash-token") process.env.UPSTASH_REDIS_REST_TOKEN = p.Value;
-    else if (p.Name === "/gold-forecast/groq-api-key") process.env.GROQ_API_KEY = p.Value;
+    if (p.Name === "/gold-forecast/groq-api-key") process.env.GROQ_API_KEY = p.Value;
     else if (p.Name === "/gold-forecast/alpha-vantage-key") process.env.ALPHA_VANTAGE_KEY = p.Value;
     else if (p.Name === "/gold-forecast/cron-secret") process.env.CRON_SECRET = p.Value;
   }
@@ -46,9 +41,9 @@ export const handler = async (event: ScheduledEvent) => {
 
   await initialize();
 
-  // Dynamic import — runs AFTER process.env is populated, so Redis.fromEnv()
-  // sees the proper credentials. ESM caches the module, so subsequent
-  // invocations on the same Lambda container reuse this import (no re-fetch).
+  // Dynamic import — runs AFTER process.env is populated. ESM caches the
+  // module, so subsequent invocations on the same Lambda container reuse
+  // this import (no re-fetch).
   const { runPipeline } = await import("../api/forecast.js");
   const { logs } = await import("../gold_forecast_agent.js");
 

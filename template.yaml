@@ -1,19 +1,42 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Gold Forecast Agent — AWS Migration v2 (Lambda + EventBridge Scheduler + S3/CloudFront)
+Description: Gold Forecast Agent — AWS Migration v3 (Lambda + EventBridge Scheduler + S3 state + S3 dashboard)
 
 Globals:
   Function:
     Runtime: nodejs20.x
     Architectures:
       - x86_64
+    Environment:
+      Variables:
+        STATE_BUCKET_NAME: !Ref StateBucket
 
 Resources:
 
+  # ─── S3 Bucket for Pipeline State (replaces Upstash Redis) ─────────────────
+  # Holds 6 small objects: gold_forecast_history.csv, last_forecast.json,
+  # analysis_history.json, adaptive_state.json, gold_forecast_accuracy.csv,
+  # gold_forecast_accuracy_legacy.csv. Versioning is on so a bad write is
+  # recoverable.
+  StateBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "goldforecast-state-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
   # ─── Lambda: Forecast Cron ─────────────────────────────────────────────────
-  # Secrets are loaded from SSM at runtime (CloudFormation does not support
-  # {{resolve:ssm-secure}} for Lambda env vars). The IAM policy below grants
-  # ssm:GetParameters + kms:Decrypt for /gold-forecast/* parameters.
+  # Secrets (Groq, Alpha Vantage, Cron) are loaded from SSM at runtime.
+  # State (CSV + JSON blobs) is read/written via S3.
   ForecastCronFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -33,6 +56,11 @@ Resources:
             - Effect: Allow
               Action: kms:Decrypt
               Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/alias/aws/ssm"
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+              Resource: !Sub "${StateBucket.Arn}/*"
 
   ForecastCronLogGroup:
     Type: AWS::Logs::LogGroup
@@ -41,8 +69,6 @@ Resources:
       RetentionInDays: 30
 
   # ─── EventBridge Scheduler (DST-aware via TimeZone parameter) ──────────────
-  # Why Scheduler vs Rules: Scheduler supports ScheduleExpressionTimezone
-  # so 10 AM Toronto stays 10 AM Toronto across DST changes.
   ForecastSchedulerRole:
     Type: AWS::IAM::Role
     Properties:
@@ -89,13 +115,8 @@ Resources:
         - Version: "2012-10-17"
           Statement:
             - Effect: Allow
-              Action:
-                - ssm:GetParameters
-                - ssm:GetParameter
-              Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/gold-forecast/*"
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/alias/aws/ssm"
+              Action: s3:GetObject
+              Resource: !Sub "${StateBucket.Arn}/*"
       Events:
         GetHistory:
           Type: HttpApi
@@ -121,8 +142,6 @@ Resources:
         AllowHeaders: ["Content-Type"]
 
   # ─── S3 Bucket for Static Site (public website hosting) ────────────────────
-  # Direct S3 website hosting — no CloudFront. Simpler and avoids the
-  # CachePolicy resolution issue. Dashboard fetches API Gateway URL directly.
   DashboardBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -168,6 +187,10 @@ Outputs:
   DashboardBucketName:
     Description: S3 bucket name for static site uploads
     Value: !Ref DashboardBucket
+
+  StateBucketName:
+    Description: S3 bucket name for pipeline state (replaces Upstash Redis)
+    Value: !Ref StateBucket
 
   ForecastSchedulerRoleArn:
     Description: IAM role ARN for EventBridge Scheduler (used by test schedules)

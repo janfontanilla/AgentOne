@@ -4,17 +4,16 @@
 **Student:** Jan Fontanilla
 **Organization:** AI SYNT (Canada)
 **Supervisor:** Architecture Implementation Manager Olga Grass
-**Date:** March 2026
+**Date:** May 2026
 
-**Live Dashboard:** [https://agentone-theta.vercel.app](https://agentone-theta.vercel.app)
 **GitHub Repository:** [https://github.com/janfontanilla/AgentOne](https://github.com/janfontanilla/AgentOne)
 
 ---
 
 A fully automated AI agent that forecasts gold price movement by analyzing news sentiment,
 mining stock performance, forex rates, and silver prices. Runs daily at **10:00 AM Toronto time**
-with automatic DST handling. Deployed to the cloud via **Vercel** with a live web dashboard
-featuring an Actual vs Predicted chart and per-day analysis history.
+with automatic DST handling. Deployed to **AWS** (Lambda + EventBridge + S3) with a live web
+dashboard featuring an Actual vs Predicted chart and per-day analysis history.
 
 This agent is the V1 prototype for the larger AI Michel project — a three-level neurotropic
 architecture AI system for predictive financial modeling.
@@ -23,32 +22,21 @@ architecture AI system for predictive financial modeling.
 
 ## Table of Contents
 
-1. [Live Demo](#live-demo)
-2. [Prerequisites](#prerequisites)
-3. [Installation & Setup](#installation--setup)
-4. [How It Works](#how-it-works)
-5. [Pipeline Actions (PDF Spec)](#pipeline-actions-pdf-spec)
-6. [Dashboard Features](#dashboard-features)
-7. [Data Sources & APIs](#data-sources--apis)
-8. [Formulas & Calculations](#formulas--calculations)
-9. [Self-Learning / Adaptive Weighting](#self-learning--adaptive-weighting)
-10. [Output Format](#output-format)
-11. [Error Handling](#error-handling)
-12. [Deployment](#deployment)
-13. [Testing](#testing)
-14. [Project Structure](#project-structure)
-15. [Tech Stack](#tech-stack)
-16. [Configuration](#configuration)
-
----
-
-## Live Demo
-
-The agent is deployed and running automatically every day:
-
-- **Dashboard:** [https://agentone-theta.vercel.app](https://agentone-theta.vercel.app) — view today's gold price, tomorrow's prediction, accuracy tracking, chart, and daily analysis
-- **API (forecast history):** [https://agentone-theta.vercel.app/api/history](https://agentone-theta.vercel.app/api/history) — JSON endpoint returning all forecast data
-- **Cron trigger:** Runs automatically at 10:00 AM Toronto time (14:00 UTC) every day
+1. [Prerequisites](#prerequisites)
+2. [Installation & Setup](#installation--setup)
+3. [How It Works](#how-it-works)
+4. [Pipeline Actions (PDF Spec)](#pipeline-actions-pdf-spec)
+5. [Dashboard Features](#dashboard-features)
+6. [Data Sources & APIs](#data-sources--apis)
+7. [Formulas & Calculations](#formulas--calculations)
+8. [Self-Learning / Adaptive Weighting](#self-learning--adaptive-weighting)
+9. [Output Format](#output-format)
+10. [Error Handling](#error-handling)
+11. [Deployment](#deployment)
+12. [Testing](#testing)
+13. [Project Structure](#project-structure)
+14. [Tech Stack](#tech-stack)
+15. [Configuration](#configuration)
 
 ---
 
@@ -60,11 +48,13 @@ The agent is deployed and running automatically every day:
 | **npm** | 9 or higher | Comes with Node.js |
 | **Groq API Key** | Free tier | Get one at [console.groq.com](https://console.groq.com/) |
 
-Optional (for cloud deployment):
+Optional (for AWS deployment):
 | Requirement | Notes |
 |-------------|-------|
-| **Vercel account** | Free Hobby tier is sufficient |
-| **Vercel CLI** | Install with `npm i -g vercel` |
+| **AWS account** | Free tier is sufficient for this workload |
+| **AWS CLI** | Install from [aws.amazon.com/cli](https://aws.amazon.com/cli/), then run `aws configure` |
+| **AWS SAM CLI** | Install with `pip install aws-sam-cli` |
+| **Alpha Vantage API Key** | Free tier (25 requests/day) — get one at [alphavantage.co](https://www.alphavantage.co/) |
 
 ---
 
@@ -84,9 +74,10 @@ npm install
 ```
 
 This installs:
-- `@vercel/blob` — cloud storage for Vercel deployment
-- `@vercel/node` — serverless function types (dev dependency)
+- `@upstash/redis` — cloud persistence (CSV history, forecast state, adaptive weights)
+- `@types/aws-lambda` — AWS Lambda type definitions (dev dependency)
 - `@types/node` — TypeScript type definitions (dev dependency)
+- `esbuild` — bundles TypeScript for Lambda deployment (dev dependency)
 
 ### Step 3: Configure Environment (API Key Setup)
 
@@ -151,11 +142,10 @@ predicted_price = today_actual_gold_price * (1 + average_coefficient / 100)
 
 ### Action 1 — News Analysis & Short Article
 
-- **Search:** Queries Google for "gold price tomorrow" to collect up to 20 URLs
-- **Fallback sources:** DuckDuckGo API, known gold news sites (kitco, reuters, bloomberg, etc.), Yahoo Finance RSS
-- **Extract:** Fetches each page and strips HTML to extract relevant text
-- **Synthesize:** Sends extracted text to **Groq API (Llama 3.3 70B)** with instructions to produce a short article answering "What will happen to the gold price in the near future?" in **no more than 25 words**
+- **Source:** Alpha Vantage NEWS_SENTIMENT API — fetches up to 20 structured gold-related news articles (requires `ALPHA_VANTAGE_KEY`, free tier: 25 requests/day)
+- **Synthesize:** Sends article headlines and summaries to **Groq API (Llama 3.3 70B)** with instructions to produce a short article answering "What will happen to the gold price in the near future?" in **no more than 25 words**
 - **Output:** Article text stored for display in Action 5 and saved to analysis history
+- **Why Alpha Vantage:** Direct web scraping (Google + DuckDuckGo + news sites) was blocked by CAPTCHAs and rate limits — only ~3 of 20 pages succeeded. Alpha Vantage gives a reliable, structured feed with no scraping required.
 
 ### Action 2 — Gold Mining Stocks (Coefficient #1)
 
@@ -239,14 +229,26 @@ The live web dashboard at the root URL provides:
 
 | Source | Used For | Auth Required |
 |--------|----------|---------------|
-| Google Search | Top 20 URLs for "gold price tomorrow" | No (may CAPTCHA) |
-| DuckDuckGo JSON API | Fallback URL collection | No |
-| Known gold sites (kitco, reuters, etc.) | Reliable URL supplements | No |
-| Yahoo Finance RSS | Additional gold news URLs | No |
+| Alpha Vantage NEWS_SENTIMENT API | Top 20 gold-related news articles for Action 1 | Yes (`ALPHA_VANTAGE_KEY`) |
 | Groq API (Llama 3.3 70B) | Article synthesis (25 words max) | Yes (`GROQ_API_KEY`) |
-| Yahoo Finance HTTP API | NEM, GOLD, AUDUSD=X, SLV prices | No |
+| Yahoo Finance HTTP API | NEM, GOLD, AUDUSD=X, SLV, GLD prices | No |
 | kitco.com | Actual gold spot price (USD/oz) | No |
 | Yahoo Finance GC=F | Gold price fallback (futures) | No |
+
+### Action 1 — Original Approach & Why It Was Replaced
+
+The original spec called for scraping up to 20 URLs from multiple sources:
+
+| Original Source | Role | Outcome |
+|----------------|------|---------|
+| Google Search (`"gold price tomorrow"`) | Primary URL collection | Blocked by CAPTCHA — returned 0 usable results |
+| DuckDuckGo JSON API | Fallback URL collection | Rate-limited — intermittently returned 0 results |
+| Known gold sites (kitco, reuters, bloomberg, etc.) | Reliable URL supplements | ~7 of 10 sites returned 403 / 404 / 401 |
+| Yahoo Finance RSS | Additional gold news URLs | Worked but only provided a few URLs |
+
+In practice only ~3 of 20 pages succeeded on any given day, meaning the Groq synthesis was running on nearly empty input. The pipeline was technically completing but producing low-quality articles.
+
+**Solution:** Replaced all scraping in Action 1 with the **Alpha Vantage NEWS_SENTIMENT API**, which provides a structured feed of up to 20 gold-related articles per request. Same Groq synthesis step, same 25-word output format — better and more reliable input data. Free tier allows 25 requests/day, well within the 1 request/day pipeline cadence.
 
 **Yahoo Finance endpoint:**
 ```
@@ -326,7 +328,7 @@ If the audit CSV's header drifts from the spec (e.g. after a column-rename rollo
 
 ### Daily run
 
-The same Vercel cron (`0 14 * * *`, 10:00 AM Toronto) runs both halves: it scores yesterday's predictions against today's actual price first, *then* generates today's new forecast using the freshly updated weights. No second cron is needed.
+The EventBridge Scheduler fires the `goldforecast-forecast-cron` Lambda at 10:00 AM Toronto time (DST-aware). It scores yesterday's predictions against today's actual price first, *then* generates today's new forecast using the freshly updated weights. No second cron is needed.
 
 ---
 
@@ -403,72 +405,126 @@ All errors are logged with timestamps and action numbers.
 
 ## Deployment
 
-### Vercel Cloud Deployment (Recommended)
+### AWS Deployment (Current — Production)
 
-The agent is designed to run on Vercel with automatic daily scheduling.
+The agent runs on AWS using Lambda + EventBridge Scheduler + S3. Infrastructure is managed with AWS SAM. All secrets are stored in SSM Parameter Store and resolved at deploy time (zero runtime cost).
 
-#### Step 1: Install Vercel CLI
+#### Architecture
 
-```bash
-npm i -g vercel
+| Component | AWS Service | Purpose |
+|-----------|-------------|---------|
+| Daily cron | EventBridge Scheduler | Fires at 10:00 AM Toronto time (DST-aware) |
+| Pipeline runner | Lambda `goldforecast-forecast-cron` | Runs the full pipeline via `runPipeline()` |
+| History API | Lambda `goldforecast-history-api` + API Gateway HTTP v2 | `GET /api/history` endpoint |
+| Dashboard | S3 static website | Hosts `public/index.html` |
+| State / persistence | Upstash Redis | CSV history, last forecast blob, adaptive state |
+| Secrets | SSM Parameter Store | All API keys and tokens, resolved at deploy time |
+| IaC | AWS SAM (`template.yaml`) | Defines all resources |
+
+#### Code Changes Made for Lambda Compatibility
+
+The agent was refactored to export clean functions that Lambda handlers call directly — no mock Vercel `req`/`res` objects needed:
+
+- `api/forecast.ts` — exports `runPipeline()` (pure pipeline logic, no Vercel deps)
+- `api/history.ts` — exports `getHistoryData()` (pure read logic)
+- `lambda/forecast-handler.ts` — Lambda entry point, calls `runPipeline()`
+- `lambda/history-handler.ts` — Lambda entry point, calls `getHistoryData()`, adds CORS headers
+- `esbuild.config.mjs` — bundles both handlers to `dist/` for Lambda deployment
+
+#### Step 1: Store Secrets in SSM
+
+```powershell
+$REGION = "us-east-1"
+
+aws ssm put-parameter --name "/gold-forecast/upstash-url"    --value "YOUR_UPSTASH_URL"   --type SecureString --region $REGION --overwrite
+aws ssm put-parameter --name "/gold-forecast/upstash-token"  --value "YOUR_UPSTASH_TOKEN" --type SecureString --region $REGION --overwrite
+aws ssm put-parameter --name "/gold-forecast/groq-api-key"   --value "YOUR_GROQ_KEY"      --type SecureString --region $REGION --overwrite
+aws ssm put-parameter --name "/gold-forecast/alpha-vantage-key" --value "YOUR_AV_KEY"     --type SecureString --region $REGION --overwrite
+aws ssm put-parameter --name "/gold-forecast/cron-secret"    --value "YOUR_CRON_SECRET"   --type SecureString --region $REGION --overwrite
 ```
 
-#### Step 2: Deploy
+#### Step 2: Build
 
 ```bash
-vercel
+npm run build
+# Outputs: dist/forecast-handler.js, dist/history-handler.js
 ```
 
-Follow the prompts to link your Vercel account and project.
-
-#### Step 3: Add Vercel Blob Storage
-
-1. Go to your project in the [Vercel Dashboard](https://vercel.com/dashboard)
-2. Navigate to the **Storage** tab
-3. Click **Create** > **Blob**
-4. The `BLOB_READ_WRITE_TOKEN` environment variable is added automatically
-
-#### Step 4: Add Environment Variables
-
-In the Vercel Dashboard, go to **Settings** > **Environment Variables** and add:
-
-| Variable | Value |
-|----------|-------|
-| `GROQ_API_KEY` | Your Groq API key from [console.groq.com](https://console.groq.com/) |
-| `CRON_SECRET` | (Optional) A secret string to secure the cron endpoint |
-
-`BLOB_READ_WRITE_TOKEN` is added automatically from Step 3.
-
-#### Step 5: Deploy to Production
+#### Step 3: Deploy with SAM
 
 ```bash
-vercel --prod
+sam validate --template template.yaml
+sam build --template template.yaml
+sam deploy \
+  --stack-name goldforecast-stack \
+  --region us-east-1 \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-confirm-changeset \
+  --resolve-s3
 ```
 
-#### After Deployment
+SAM will output your live URLs:
+- `CloudFrontUrl` or `HistoryApiUrl` — the `/api/history` endpoint
+- `DashboardBucketName` — S3 bucket name for the static dashboard
 
-- **Dashboard:** `https://yourapp.vercel.app` — live forecast dashboard
-- **Cron:** Runs automatically at 14:00 UTC (10:00 AM Toronto EDT) every day
-- **Manual trigger:** `curl https://yourapp.vercel.app/api/forecast`
+#### Step 4: Upload Dashboard to S3
 
-### Vercel Architecture
+```bash
+BUCKET=$(aws cloudformation describe-stacks --stack-name goldforecast-stack \
+  --query "Stacks[0].Outputs[?OutputKey=='DashboardBucketName'].OutputValue" \
+  --output text --region us-east-1)
 
-| Component | File | Purpose |
-|-----------|------|---------|
-| Cron endpoint | `api/forecast.ts` | Runs the full 7-action pipeline on schedule |
-| History API | `api/history.ts` | Returns JSON data for the dashboard |
-| Dashboard | `public/index.html` | Frontend with chart, table, and analysis |
-| Cron config | `vercel.json` | Schedule: `0 14 * * *` (daily at 14:00 UTC) |
-| Storage | Vercel Blob | Persists CSV and JSON data between runs |
-| Max duration | 300 seconds | Vercel Fluid Compute for long-running pipeline |
+aws s3 sync ./public s3://$BUCKET --delete --region us-east-1
+```
+
+#### Step 5: Verify Deployment
+
+```bash
+# Manually trigger the pipeline Lambda
+aws lambda invoke \
+  --function-name goldforecast-forecast-cron \
+  --region us-east-1 /tmp/response.json
+
+cat /tmp/response.json
+# Expected: {"statusCode":200,"body":"{\"status\":\"success\",...}"}
+
+# Check CloudWatch logs
+aws logs tail /aws/lambda/goldforecast-forecast-cron --since 10m --region us-east-1
+```
+
+#### Get Your Live URLs Any Time
+
+```powershell
+aws cloudformation describe-stacks --stack-name goldforecast-stack `
+  --query "Stacks[0].Outputs" --output table --region us-east-1
+```
+
+#### Cost
+
+Everything runs within the AWS free tier — estimated cost: **$0/month**.
+
+| Service | Monthly Usage | Free Tier |
+|---------|---------------|-----------|
+| Lambda (forecast) | 30 invocations × ~60s × 512 MB | 400,000 GB-s |
+| Lambda (history API) | ~3,000 requests | 400,000 GB-s |
+| API Gateway | ~3,000 requests | 1M/month |
+| EventBridge Scheduler | 30 invocations | 14M/month |
+| S3 | ~100 KB storage | 5 GB (12 mo) |
+| CloudWatch Logs | ~1 MB/month | 5 GB |
+
+---
 
 ### Local Development
 
-For local testing without Vercel:
+For local testing without AWS:
+
 ```bash
 npx tsx gold_forecast_agent.ts
 ```
-This uses the local `data/` directory for persistence instead of Vercel Blob.
+
+Uses the local `data/` directory for persistence instead of Upstash Redis.
+
+---
 
 ### Future: AI Michel Expansion
 
@@ -476,6 +532,8 @@ This V1 agent is structured to evolve into the full AI Michel 3-agent neurotropi
 - Agent #1 "Sensor Stream" — data collection (this agent)
 - Agent #2 "Stream of Consciousness" — analysis + ChromaDB + Ollama
 - Agent #3 "Stream of Action" — prediction generation
+
+Additional agents for other assets (stocks, silver, etc.) will follow the same AWS architecture pattern, with a final summarizer agent aggregating all findings.
 
 ---
 
@@ -518,18 +576,22 @@ AgentOne/
 ├── test_gold_forecast.ts        # Pipeline unit + structural tests
 ├── test_adaptive.ts             # Adaptive-weighting unit tests (rank, cum bonuses, forecast)
 ├── api/
-│   ├── forecast.ts              # Vercel cron handler — full 10-action production pipeline
+│   ├── forecast.ts              # Exports runPipeline() — full 10-action production pipeline
 │   ├── adaptive.ts              # Stage 3 self-learning module (10/5/0 ranking, weights)
-│   └── history.ts               # Read-only JSON endpoint that powers the dashboard
+│   └── history.ts               # Exports getHistoryData() — read-only JSON for dashboard
+├── lambda/
+│   ├── forecast-handler.ts      # AWS Lambda entry: invokes runPipeline() from EventBridge
+│   └── history-handler.ts       # AWS Lambda entry: invokes getHistoryData() from API Gateway
 ├── public/
-│   └── index.html               # Live dashboard (chart, table, per-day analysis)
-├── vercel.json                  # Cron schedule: 0 14 * * * (10 AM Toronto)
-├── package.json                 # Dependencies and npm scripts
+│   └── index.html               # Live dashboard (chart, table, per-day analysis) — hosted on S3
+├── template.yaml                # AWS SAM — Lambda, EventBridge, S3, API Gateway, IAM
+├── esbuild.config.mjs           # Bundles lambda/ handlers to dist/ for Lambda deployment
+├── package.json                 # Dependencies and npm scripts (build, deploy, test)
 ├── package-lock.json            # Locked dependency versions
 ├── tsconfig.json                # TypeScript strict mode, ES2022, ESNext modules
-├── .env                         # GROQ_API_KEY (NOT committed — see .env.example)
+├── .env                         # API keys (NOT committed — see .env.example)
 ├── .env.example                 # Template for environment setup
-├── .gitignore                   # Excludes .env, node_modules, data/, .vercel
+├── .gitignore                   # Excludes .env, node_modules, data/, dist/
 ├── README.md                    # This file
 └── data/                        # Local persistence directory (NOT committed)
     ├── gold_forecast_history.csv  # Append-only daily forecast history
@@ -544,13 +606,19 @@ AgentOne/
 | Technology | Purpose |
 |------------|---------|
 | TypeScript | Agent source code (strict mode enabled) |
-| Node.js 18+ | Runtime with native `fetch()` — no external HTTP library |
-| `npx tsx` | Direct TypeScript execution without a build step |
+| Node.js 20 | Runtime with native `fetch()` — no external HTTP library |
+| `npx tsx` | Direct TypeScript execution for local development |
+| esbuild | Bundles TypeScript to ESM for AWS Lambda deployment |
+| AWS Lambda | Serverless compute — runs the forecast pipeline and history API |
+| AWS EventBridge Scheduler | DST-aware daily cron at 10:00 AM Toronto time |
+| AWS S3 | Static website hosting for the dashboard |
+| AWS SAM | Infrastructure-as-Code (`template.yaml`) for all AWS resources |
+| AWS SSM Parameter Store | Encrypted secret storage (resolved at deploy time) |
+| Alpha Vantage NEWS_SENTIMENT | Structured gold news feed for Action 1 (replaces web scraping) |
 | Groq API | Cloud inference for Llama 3.3 70B |
 | Llama 3.3 70B | LLM for news synthesis (25-word article from 20 sources) |
-| Yahoo Finance HTTP API | Stock prices (NEM, GOLD), forex (AUDUSD=X), ETF (SLV), gold futures (GC=F) |
+| Yahoo Finance HTTP API | Stock prices (NEM, GOLD, GLD), forex (AUDUSD=X), ETF (SLV), gold futures (GC=F) |
 | kitco.com | Primary gold spot price source (USD per troy ounce) |
-| Vercel | Cloud deployment with serverless functions and cron scheduling (Stage 4 will migrate to AWS Lambda + EventBridge + S3/CloudFront) |
 | Upstash Redis | Cloud persistence for CSV history, last-forecast blob, adaptive state, and accuracy audit log |
 | Chart.js 4 | Actual vs Predicted line chart on dashboard (loaded via CDN) |
 | CSV + JSON | Data formats for forecast history and pipeline state |
@@ -563,10 +631,13 @@ AgentOne/
 
 | Variable | Required | Where | Description |
 |----------|----------|-------|-------------|
-| `GROQ_API_KEY` | Yes | Local + Vercel | API key for Groq cloud inference ([get one free](https://console.groq.com/)) |
-| `UPSTASH_REDIS_REST_URL` | Vercel + AWS | Vercel/AWS | Upstash Redis REST endpoint URL |
-| `UPSTASH_REDIS_REST_TOKEN` | Vercel + AWS | Vercel/AWS | Upstash Redis REST auth token |
-| `CRON_SECRET` | Required | Vercel | Bearer token the cron handler verifies (default-deny if unset) |
+| `GROQ_API_KEY` | Yes | Local + AWS | API key for Groq cloud inference ([get one free](https://console.groq.com/)) |
+| `ALPHA_VANTAGE_KEY` | Yes | Local + AWS | API key for Alpha Vantage NEWS_SENTIMENT ([get one free](https://www.alphavantage.co/)) |
+| `UPSTASH_REDIS_REST_URL` | Yes | Local + AWS | Upstash Redis REST endpoint URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Yes | Local + AWS | Upstash Redis REST auth token |
+| `CRON_SECRET` | Yes | AWS | Bearer token used to secure the forecast Lambda endpoint |
+
+In AWS, all variables are stored as encrypted SSM Parameter Store entries under `/gold-forecast/*` and injected into Lambda at deploy time — they are never exposed in plaintext in the CloudFormation template.
 
 ### Configuration Files
 
@@ -574,9 +645,10 @@ AgentOne/
 |------|---------|
 | `.env` | Local environment variables (not committed) |
 | `.env.example` | Template showing required variables |
-| `vercel.json` | Vercel cron schedule and serverless function config |
+| `template.yaml` | AWS SAM — defines all Lambda, EventBridge, S3, and IAM resources |
+| `esbuild.config.mjs` | Bundles `lambda/forecast-handler.ts` and `lambda/history-handler.ts` to `dist/` |
 | `tsconfig.json` | TypeScript: strict mode, ES2022 target, NodeNext modules, `noEmit` (run via tsx) |
-| `package.json` | Type: module, dependencies, npm scripts for run/test |
+| `package.json` | Type: module, dependencies, npm scripts (`build`, `deploy`, `test`) |
 
 ---
 
@@ -599,3 +671,4 @@ Supervisor source materials (in `docs/`): `Gold_Forecast_Spec_v1.pdf`, `Prompt_f
 **Student:** Jan Fontanilla
 **Architecture Implementation Manager:** Olga Grass (AI SYNT)
 **Project:** AI Michel - Experimental Simulation of a Three-Level Neurotropic Architecture
+**Last Updated:** May 2026

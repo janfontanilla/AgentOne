@@ -502,9 +502,9 @@ describe("Vercel deployment validation", () => {
     assert.ok(html.includes("/api/history"));
   });
 
-  it("forecast API uses Upstash Redis for storage", () => {
+  it("forecast API uses S3 for storage", () => {
     const source = fs.readFileSync(path.join(SCRIPT_DIR, "api", "forecast.ts"), "utf-8");
-    assert.ok(source.includes("@upstash/redis"), "forecast.ts should import @upstash/redis");
+    assert.ok(source.includes("./storage.js"), "forecast.ts should import from ./storage.js");
   });
 
   it("forecast API has maxDuration config", () => {
@@ -514,9 +514,9 @@ describe("Vercel deployment validation", () => {
     assert.ok(vercelConfig.functions?.["api/forecast.ts"]?.maxDuration);
   });
 
-  it("package.json has @upstash/redis dependency", () => {
+  it("package.json has @aws-sdk/client-s3 dependency", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(SCRIPT_DIR, "package.json"), "utf-8"));
-    assert.ok(pkg.dependencies["@upstash/redis"], "Should have @upstash/redis");
+    assert.ok(pkg.dependencies["@aws-sdk/client-s3"], "Should have @aws-sdk/client-s3");
   });
 });
 
